@@ -23,6 +23,7 @@ class UsuariosFormView(ctk.CTkFrame):
         self._on_cancelar = on_cancelar
         self._on_registrar = on_registrar
         self._modo_edicion = False
+        self._current_id = None
         self._show_password = False
         self._campos = {}
         self._errores = {}
@@ -262,6 +263,7 @@ class UsuariosFormView(ctk.CTkFrame):
         if not self._validate_all():
             return
         datos = {
+            "id_usuario": self._current_id,
             "dni":      self._campos["dni"].get().strip(),
             "nombre":   self._campos["nombre"].get().strip(),
             "apellido": self._campos["apellido"].get().strip(),
@@ -275,11 +277,9 @@ class UsuariosFormView(ctk.CTkFrame):
     # API pública
     # ──────────────────────────────────────────────────────────
     def cargar_usuario(self, usuario: dict):
-        """
-        Precarga el formulario para edición.
-        TODO: conectar con backend — datos frescos desde BD
-        """
+        """Precarga el formulario para edición."""
         self._modo_edicion = True
+        self._current_id = usuario.get("id_usuario")
         self._titulo_label.configure(text="✏  Editar Usuario")
         self._subtitulo_label.configure(
             text="Modificá los datos del usuario. El DNI no puede cambiarse.")
@@ -299,6 +299,7 @@ class UsuariosFormView(ctk.CTkFrame):
     def limpiar(self):
         """Resetea el formulario al estado de nuevo usuario."""
         self._modo_edicion = False
+        self._current_id = None
         self._titulo_label.configure(text="➕  Nuevo Usuario")
         self._subtitulo_label.configure(
             text="Completá los datos para registrar un nuevo usuario en el sistema.")

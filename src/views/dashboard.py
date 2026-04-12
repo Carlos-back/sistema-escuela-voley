@@ -6,6 +6,7 @@ views/dashboard.py — Panel principal (dashboard)
 import customtkinter as ctk
 from datetime import datetime
 from theme import COLORS, FONTS, RADIUS, make_button, make_label, make_card, make_badge
+from services.dashboard import obtener_resumen_dashboard, obtener_proximas_clases, obtener_ingresos_mensuales
 
 try:
     import matplotlib
@@ -27,30 +28,20 @@ class DashboardView(ctk.CTkFrame):
         user   : dict con datos del usuario actual
     """
 
-    # TODO: conectar con backend — obtener estadísticas reales de BD
-    _MOCK_STATS = {
-        "alumnos_activos":    48,
-        "alumnos_nuevos_mes":  5,
-        "pagos_pendientes":   12,
-        "ingresos_mes":    84500,
-        "clases_semana":       9,
-        "profesores":          3,
-    }
-    _MOCK_PAGOS_MENSUALES = {
-        "labels":  ["Oct", "Nov", "Dic", "Ene", "Feb", "Mar"],
-        "valores": [62000, 71000, 58000, 79000, 83000, 84500],
-    }
-    _MOCK_ACTIVIDAD = [
-        {"hora": "09:15", "texto": "Nuevo alumno inscripto: Valentina Ruiz",    "tipo": "alumno"},
-        {"hora": "10:30", "texto": "Pago recibido: $5.000 — Lucas Pérez",        "tipo": "pago"},
-        {"hora": "11:00", "texto": "Clase de Avanzadas — Prof. García",          "tipo": "clase"},
-        {"hora": "12:45", "texto": "Pago vencido: Sofía Martínez",               "tipo": "alerta"},
-        {"hora": "14:20", "texto": "Usuario editado: Carlos Mendez",             "tipo": "usuario"},
-    ]
-
     def __init__(self, parent, user: dict):
         super().__init__(parent, fg_color=COLORS["bg"], corner_radius=0)
         self._user = user or {}
+        self._stats = obtener_resumen_dashboard()
+        self._clases = obtener_proximas_clases()
+        self._ingresos_mensuales = obtener_ingresos_mensuales()
+        
+        # MOCK de actividad para visualización (esto podría venir de logs en una versión futura)
+        self._actividad = [
+            {"hora": "09:15", "texto": "Nuevo alumno inscripto: Valentina Ruiz",    "tipo": "alumno"},
+            {"hora": "10:30", "texto": "Pago recibido: $5.000 — Lucas Pérez",        "tipo": "pago"},
+            {"hora": "11:00", "texto": "Clase de Avanzadas — Prof. García",          "tipo": "clase"},
+        ]
+
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
         self._build_ui()
@@ -93,21 +84,21 @@ class DashboardView(ctk.CTkFrame):
         # ── KPI cards ─────────────────────────────────────────
         kpis = [
             ("👩‍🎓", "Alumnos Activos",
-             str(self._MOCK_STATS["alumnos_activos"]),
-             f"+{self._MOCK_STATS['alumnos_nuevos_mes']} este mes",
+             str(self._stats.get("total_alumnos", 0)),
+             "Total registrados",
              COLORS["primary"]),
-            ("💳", "Pagos Pendientes",
-             str(self._MOCK_STATS["pagos_pendientes"]),
-             "Requieren atención",
-             COLORS["warning"]),
-            ("💰", "Ingresos del Mes",
-             f"${self._MOCK_STATS['ingresos_mes']:,.0f}".replace(",", "."),
-             "Acumulado mensual",
+            ("💳", "Recaudación Semanal",
+             f"${self._stats.get('recaudacion_semanal', 0):,.0f}".replace(",", "."),
+             "Últimos 7 días",
              COLORS["success"]),
-            ("📅", "Clases esta Semana",
-             str(self._MOCK_STATS["clases_semana"]),
-             f"{self._MOCK_STATS['profesores']} profesores",
+            ("📅", "Presentes Semanal",
+             str(self._stats.get("asistencias_semanales", 0)),
+             "Total asistencias",
              "#8B5CF6"),
+            ("🕐", "Última Actualización",
+             self._stats.get("fecha_actualización", "--/--"),
+             "Sincronizado",
+             COLORS["info"]),
         ]
         for i, (icon, titulo, valor, sub, color) in enumerate(kpis):
             self._make_kpi_card(body, row=0, col=i,
@@ -143,7 +134,7 @@ class DashboardView(ctk.CTkFrame):
             "alerta":  ("#FEF3C7", "#D97706"),
             "usuario": ("#FDF2F8", "#BE185D"),
         }
-        for idx, item in enumerate(self._MOCK_ACTIVIDAD):
+        for idx, item in enumerate(self._actividad):
             bg, fg = tipo_colors.get(item["tipo"], ("#F5F5F5", "#374151"))
             row_f = ctk.CTkFrame(activity_frame, fg_color=bg, corner_radius=8)
             row_f.grid(row=idx + 1, column=0, sticky="ew", padx=14, pady=3)
@@ -158,7 +149,7 @@ class DashboardView(ctk.CTkFrame):
                          ).grid(row=0, column=1, sticky="w", padx=(0, 10), pady=8)
 
         ctk.CTkLabel(activity_frame, text="", height=10).grid(
-            row=len(self._MOCK_ACTIVIDAD) + 1, column=0)
+            row=len(self._actividad) + 1, column=0)
 
         # ── Accesos rápidos ───────────────────────────────────
         quick = ctk.CTkFrame(body, fg_color="transparent")
@@ -207,7 +198,7 @@ class DashboardView(ctk.CTkFrame):
                        variant="muted").grid(row=1, column=0, pady=40)
             return
 
-        datos = self._MOCK_PAGOS_MENSUALES
+        datos = self._ingresos_mensuales
         fig = Figure(figsize=(5.5, 2.8), dpi=100, facecolor="#FFFFFF")
         ax  = fig.add_subplot(111)
         ax.set_facecolor("#FAFAFA")

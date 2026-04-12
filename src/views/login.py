@@ -5,6 +5,7 @@ views/login.py — Pantalla de inicio de sesión
 
 import customtkinter as ctk
 from theme import COLORS, FONTS, RADIUS, make_button, make_entry, make_label, make_card, make_accent_bar
+from services.auth import login as api_login
 
 
 class LoginView(ctk.CTkFrame):
@@ -16,12 +17,6 @@ class LoginView(ctk.CTkFrame):
         on_login    : callback(user_dict) al login exitoso
         on_recuperar: callback() para ir a recuperar contraseña
     """
-
-    # TODO: conectar con backend — validar credenciales contra BD
-    _MOCK_USERS = [
-        {"dni": "12345678", "password": "admin123", "nombre": "Laura García",  "rol": "administrador", "email": "laura@flamingo.com"},
-        {"dni": "87654321", "password": "prof456",  "nombre": "Carlos Mendez", "rol": "profesor",      "email": "carlos@flamingo.com"},
-    ]
 
     def __init__(self, parent, on_login, on_recuperar):
         super().__init__(parent, fg_color=COLORS["bg"], corner_radius=0)
@@ -166,11 +161,8 @@ class LoginView(ctk.CTkFrame):
             self._general_error.configure(text="❌  DNI o contraseña incorrectos")
 
     def _authenticate(self, dni: str, pwd: str):
-        """TODO: conectar con backend — validar contra BD (SQLite)"""
-        for user in self._MOCK_USERS:
-            if user["dni"] == dni and user["password"] == pwd:
-                return user
-        return None
+        """Valida credenciales contra la BD SQLite."""
+        return api_login(dni, pwd)
 
     def _toggle_password(self):
         self._show_password = not self._show_password

@@ -23,6 +23,14 @@ from views.usuarios_listado import UsuariosListadoView
 from views.usuarios_form import UsuariosFormView
 from views.perfil import PerfilView
 from components.sidebar import Sidebar
+from CTkMessagebox import CTkMessagebox
+import services.auth as auth_service
+import services.usuarios as user_service
+from db.database import init_db
+
+
+# Inicializar base de datos y migraciones
+init_db()
 
 ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")
@@ -154,25 +162,56 @@ class FlamingoApp(ctk.CTk):
         self.views["usuarios_form"].cargar_usuario(usuario)
         self.show_view("usuarios_form")
 
-    def _handle_registrar_usuario(self, usuario: dict):
-        """
-        TODO: conectar con backend — insertar usuario en BD
-        """
-        self.show_view("usuarios_listado")
+    def _handle_registrar_usuario(self, datos: dict):
+        """Maneja la creación o edición de un usuario en la BD."""
+        if self.views["usuarios_form"]._modo_edicion:
+            # Edición
+            exito = user_service.editar_usuario(
+                id_usuario=datos.get("id_usuario"),
+                usuario=datos["dni"],
+                nombre=datos["nombre"],
+                apellido=datos["apellido"],
+                email=datos["email"],
+                rol=datos["rol"].lower(),
+                contrasena=datos["password"]
+            )
+        else:
+            # Nuevo
+            exito = user_service.crear_usuario(
+                usuario=datos["dni"],
+                nombre=datos["nombre"],
+                apellido=datos["apellido"],
+                email=datos["email"],
+                contrasena=datos["password"] or "123456",
+                rol=datos["rol"].lower()
+            )
+        
+        if exito:
+            if "usuarios_listado" in self.views:
+                self.views["usuarios_listado"].cargar_datos()
+                self.views["usuarios_listado"]._render_rows(self.views["usuarios_listado"]._usuarios)
+            self.show_view("usuarios_listado")
+        else:
+            CTkMessagebox(title="Error", message="No se pudo procesar la solicitud.", icon="cancel")
 
     def _handle_perfil_guardado(self, datos: dict):
-        """
-        TODO: conectar con backend — actualizar datos de usuario en BD
-        """
+        """Actualiza los datos del perfil en la BD."""
         if self.current_user:
-            self.current_user.update(datos)
-        if self.sidebar:
-            self.sidebar.update_user(self.current_user)
+            exito = user_service.editar_usuario(
+                id_usuario=self.current_user["id_usuario"],
+                usuario=datos.get("nombre"),
+                contrasena=datos.get("password")
+            )
+            if exito:
+                self.current_user.update(datos)
+                if self.sidebar:
+                    self.sidebar.update_user(self.current_user)
+            else:
+                 CTkMessagebox(title="Error", message="Error al actualizar perfil.", icon="cancel")
 
     def _handle_logout(self):
-        """
-        TODO: conectar con backend — invalidar token/sesión
-        """
+        """Cierra la sesión y limpia el estado."""
+        auth_service.logout()
         self.current_user = None
         for name in ["dashboard", "usuarios_listado", "usuarios_form", "perfil"]:
             if name in self.views:

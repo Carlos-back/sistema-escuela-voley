@@ -5,6 +5,7 @@ views/usuarios_listado.py — Gestión de Usuarios (listado)
 
 import customtkinter as ctk
 from theme import COLORS, FONTS, RADIUS, make_button, make_label, make_card, make_badge, make_divider
+from services.usuarios import listar_usuarios, baja_logica_usuario
 
 
 class UsuariosListadoView(ctk.CTkFrame):
@@ -16,16 +17,6 @@ class UsuariosListadoView(ctk.CTkFrame):
         on_nuevo  : callback() para abrir formulario nuevo usuario
         on_editar : callback(usuario_dict) para abrir formulario edición
     """
-
-    # TODO: conectar con backend — obtener usuarios reales de BD
-    _MOCK_USUARIOS = [
-        {"dni": "12345678", "nombre": "Lautaro Recio",    "email": "reciolauti@gmail.com",   "rol": "Administrador", "activo": True},
-        {"dni": "87654321", "nombre": "Carlos Mendez",   "email": "carlos@flamingo.com",  "rol": "Profesor",      "activo": True},
-        {"dni": "11223344", "nombre": "Valentina López", "email": "vale@flamingo.com",    "rol": "Profesor",      "activo": True},
-        {"dni": "55667788", "nombre": "Martín Suárez",   "email": "martin@flamingo.com",  "rol": "Profesor",      "activo": False},
-        {"dni": "99887766", "nombre": "Sofía Ramírez",   "email": "sofia@flamingo.com",   "rol": "Administrador", "activo": True},
-        {"dni": "44332211", "nombre": "Diego Torres",    "email": "diego@flamingo.com",   "rol": "Profesor",      "activo": False},
-    ]
 
     # Estos anchos definen el esqueleto de la tabla
     _COL_WIDTHS = {
@@ -41,11 +32,15 @@ class UsuariosListadoView(ctk.CTkFrame):
         super().__init__(parent, fg_color=COLORS["bg"], corner_radius=0)
         self._on_nuevo = on_nuevo
         self._on_editar = on_editar
-        self._usuarios = [dict(u) for u in self._MOCK_USUARIOS]
+        self.cargar_datos()
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(2, weight=1)
         self._build_ui()
+
+    def cargar_datos(self):
+        """Carga datos reales desde el backend."""
+        self._usuarios = listar_usuarios()
 
     # ──────────────────────────────────────────────────────────
     # Construcción de la UI
@@ -165,18 +160,20 @@ class UsuariosListadoView(ctk.CTkFrame):
         av = ctk.CTkFrame(nf, width=28, height=28, corner_radius=14, fg_color=COLORS["primary"])
         av.pack(side="left", padx=(0, 8))
         av.pack_propagate(False)
-        ctk.CTkLabel(av, text=usuario["nombre"][0].upper(),
+        nombre_disp = usuario.get("nombre") or "Usuario"
+        ctk.CTkLabel(av, text=nombre_disp[0].upper(),
                      font=FONTS.SM_BOLD(), text_color="white",
                      ).place(relx=0.5, rely=0.5, anchor="center")
         
-        make_label(nf, usuario["nombre"], variant="body", anchor="w").pack(side="left", fill="x", expand=True)
+        make_label(nf, nombre_disp, variant="body", anchor="w").pack(side="left", fill="x", expand=True)
         col_idx += 1
 
         # --- EMAIL ---
         ef = ctk.CTkFrame(row_f, fg_color="transparent", width=self._COL_WIDTHS["Email"], height=row_h)
         ef.grid(row=0, column=col_idx, padx=4, pady=2, sticky="w")
         ef.pack_propagate(False)
-        make_label(ef, usuario["email"], variant="muted", anchor="w").pack(side="left", fill="x", expand=True)
+        email_disp = usuario.get("email") or "Sin email"
+        make_label(ef, email_disp, variant="muted", anchor="w").pack(side="left", fill="x", expand=True)
         col_idx += 1
 
         # --- ROL (Badge) ---
@@ -230,9 +227,14 @@ class UsuariosListadoView(ctk.CTkFrame):
         self._render_rows(filtrados)
 
     def _toggle_estado(self, usuario: dict, var: ctk.BooleanVar):
-        """TODO: conectar con backend — actualizar estado en BD"""
-        usuario["activo"] = var.get()
-        activos = sum(1 for u in self._usuarios if u["activo"])
-        self._stats_label.configure(
-            text=f"  {len(self._usuarios)} usuarios  ·  {activos} activos"
-        )
+        """Actualiza el estado de activo/inactivo en la BD."""
+        exito = baja_logica_usuario(usuario["id_usuario"], 1 if var.get() else 0)
+        if exito:
+            usuario["activo"] = var.get()
+            activos = sum(1 for u in self._usuarios if u["activo"])
+            self._stats_label.configure(
+                text=f"  {len(self._usuarios)} usuarios  ·  {activos} activos"
+            )
+        else:
+            # Revertir switch si falló
+            var.set(not var.get())

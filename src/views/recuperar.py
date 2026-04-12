@@ -5,6 +5,7 @@ views/recuperar.py — Pantalla de recuperación de contraseña
 
 import customtkinter as ctk
 from theme import COLORS, FONTS, RADIUS, make_button, make_entry, make_label, make_card
+from services.auth import recuperar_contrasena as api_recuperar
 
 
 class RecuperarView(ctk.CTkFrame):
@@ -15,9 +16,6 @@ class RecuperarView(ctk.CTkFrame):
         parent  : ventana raíz
         on_back : callback() para volver al login
     """
-
-    # TODO: conectar con backend — emails registrados en BD
-    _MOCK_EMAILS = ["reciolauti@gmail.com", "carlos@flamingo.com"]
 
     def __init__(self, parent, on_back):
         super().__init__(parent, fg_color=COLORS["bg"], corner_radius=0)
@@ -122,16 +120,18 @@ class RecuperarView(ctk.CTkFrame):
             self._set_error("Ingresá un email válido")
             return
 
-        # TODO: conectar con backend — validar email contra BD
-        if email in self._MOCK_EMAILS:
+        # Llamada real al servicio
+        exito, mensaje = api_recuperar(email)
+        
+        if exito:
             self._feedback_label.configure(
-                text=f"✅  ¡Listo! Te enviamos un enlace de recuperación a\n{email}",
+                text=f"✅  {mensaje}\nRevisa tu bandeja de entrada.",
                 text_color=COLORS["success"],
             )
             self._send_btn.configure(state="disabled", text="✔  Email enviado")
             self._email_entry.configure(state="disabled")
         else:
-            self._set_error("No encontramos una cuenta con ese email")
+            self._set_error(mensaje)
 
     def _set_error(self, msg: str):
         self._email_entry.configure(border_color=COLORS["error"], border_width=2)
