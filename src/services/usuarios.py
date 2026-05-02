@@ -14,10 +14,10 @@ def crear_usuario(usuario, contrasena, rol, nombre=None, apellido=None, email=No
             (usuario, hashed, rol, nombre, apellido, email)
         )
         conn.commit()
-        return True
+        return cursor.lastrowid
     except Exception as e:
         print(f"Error al crear usuario: {e}")
-        return False
+        return None
     finally:
         conn.close()
 

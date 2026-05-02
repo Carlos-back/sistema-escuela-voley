@@ -52,40 +52,108 @@ def logout():
     """Limpia la sesión actual."""
     session.user = None
 
-def recuperar_contrasena(email, usuario_dni):
-    """
-    Envía un email con una contraseña temporal.
-    TODO: Implementar lógica de generación de password temporal y actualización en BD.
-    """
-    if not Config.EMAIL_USER or not Config.EMAIL_PASS:
-        return False, "Configuración de email incompleta."
-        
-    nueva_pass = "Tmp12345" # Password temporal simplificada para la demo
-    hashed = hash_password(nueva_pass)
-    
+PREGUNTAS_SEGURIDAD = [
+    "¿Cuál es el apodo que te puso tu familia?",
+    "¿Cómo se llamaba tu mejor amigo de la infancia?",
+    "¿Cuál es el nombre de tu abuela materna?",
+    "¿Cuál es tu película favorita?",
+    "¿Cuál es tu canción favorita?",
+    "¿Cuál es tu equipo de fútbol?",
+    "¿Cuál fue el primer deporte que practicaste?",
+    "¿Cuál fue el primer equipo en el que jugaste?",
+    "¿Cómo se llamaba tu primer profesor/a?",
+    "¿Cuál fue el primer trabajo que tuviste?",
+]
+
+def guardar_preguntas_seguridad(id_usuario, preguntas_respuestas):
+    """Guarda o actualiza las preguntas de seguridad de un usuario."""
     conn = get_connection()
+    if not conn:
+        return False
     try:
         cursor = conn.cursor()
-        # Buscar usuario por email
-        cursor.execute("UPDATE Usuarios SET contrasena = ? WHERE email = ?", (hashed, email))
-        if cursor.rowcount == 0:
-            return False, "Ese email no está registrado."
+        
+        # Validar si ya existen
+        cursor.execute("SELECT id FROM PreguntasSeguridad WHERE id_usuario = ?", (id_usuario,))
+        existe = cursor.fetchone()
+        
+        # Procesar y hashear respuestas
+        p1, r1 = preguntas_respuestas[0]["pregunta"], hash_password(preguntas_respuestas[0]["respuesta"].lower().strip())
+        p2, r2 = preguntas_respuestas[1]["pregunta"], hash_password(preguntas_respuestas[1]["respuesta"].lower().strip())
+        p3, r3 = preguntas_respuestas[2]["pregunta"], hash_password(preguntas_respuestas[2]["respuesta"].lower().strip())
+        
+        if existe:
+            cursor.execute("""
+                UPDATE PreguntasSeguridad 
+                SET pregunta_1 = ?, respuesta_1 = ?, pregunta_2 = ?, respuesta_2 = ?, pregunta_3 = ?, respuesta_3 = ?
+                WHERE id_usuario = ?
+            """, (p1, r1, p2, r2, p3, r3, id_usuario))
+        else:
+            cursor.execute("""
+                INSERT INTO PreguntasSeguridad (id_usuario, pregunta_1, respuesta_1, pregunta_2, respuesta_2, pregunta_3, respuesta_3)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (id_usuario, p1, r1, p2, r2, p3, r3))
             
         conn.commit()
-        
-        # Enviar email
-        msg = MIMEText(f"Tu nueva contraseña temporal es: {nueva_pass}\nPor favor, cámbiala al ingresar.")
-        msg['Subject'] = 'Recuperación de Contraseña - Flamingo Sys'
-        msg['From'] = Config.EMAIL_USER
-        msg['To'] = email
-        
-        with smtplib.SMTP(Config.SMTP_SERVER, Config.SMTP_PORT) as server:
-            server.starttls()
-            server.login(Config.EMAIL_USER, Config.EMAIL_PASS)
-            server.send_message(msg)
+        return True
+    finally:
+        conn.close()
+
+def obtener_preguntas(dni):
+    """Retorna las preguntas configuradas por el usuario."""
+    conn = get_connection()
+    if not conn:
+        return None
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT ps.pregunta_1, ps.pregunta_2, ps.pregunta_3 
+            FROM PreguntasSeguridad ps
+            JOIN Usuarios u ON ps.id_usuario = u.id_usuario
+            WHERE u.usuario = ?
+        """, (dni,))
+        row = cursor.fetchone()
+        if row:
+            return [row['pregunta_1'], row['pregunta_2'], row['pregunta_3']]
+        return None
+    finally:
+        conn.close()
+
+def verificar_respuestas(dni, respuestas):
+    """Verifica si las 3 respuestas ingresadas coinciden con los hashes en DB."""
+    conn = get_connection()
+    if not conn:
+        return False
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT ps.respuesta_1, ps.respuesta_2, ps.respuesta_3 
+            FROM PreguntasSeguridad ps
+            JOIN Usuarios u ON ps.id_usuario = u.id_usuario
+            WHERE u.usuario = ?
+        """, (dni,))
+        row = cursor.fetchone()
+        if not row:
+            return False
             
-        return True, "Email enviado con éxito."
-    except Exception as e:
-        return False, f"Error: {e}"
+        return (
+            check_password(respuestas[0].lower().strip(), row['respuesta_1']) and
+            check_password(respuestas[1].lower().strip(), row['respuesta_2']) and
+            check_password(respuestas[2].lower().strip(), row['respuesta_3'])
+        )
+    finally:
+        conn.close()
+
+def resetear_contrasena(dni, nueva_contrasena):
+    """Actualiza la contraseña del usuario en la BD."""
+    conn = get_connection()
+    if not conn:
+        return False
+    try:
+        cursor = conn.cursor()
+        hashed = hash_password(nueva_contrasena)
+        cursor.execute("UPDATE Usuarios SET contrasena = ? WHERE usuario = ?", (hashed, dni))
+        conn.commit()
+        return cursor.rowcount > 0
     finally:
         conn.close()

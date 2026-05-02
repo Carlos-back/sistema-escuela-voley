@@ -4,7 +4,10 @@ components/sidebar.py — Sidebar de navegación reutilizable
 """
 
 import customtkinter as ctk
+import threading
 from theme import COLORS, FONTS
+from db.sync import sincronizar, obtener_ultima_sincronizacion
+from CTkMessagebox import CTkMessagebox
 
 
 class Sidebar(ctk.CTkFrame):
@@ -92,6 +95,34 @@ class Sidebar(ctk.CTkFrame):
             row_idx += 1
 
         self.grid_rowconfigure(3, weight=1)
+
+        # ── Sección de sincronización ─────────────────────────
+        self.sync_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.sync_frame.grid(row=3, column=0, sticky="s", padx=8, pady=(0, 10))
+        
+        ultima_sync = obtener_ultima_sincronizacion()
+        
+        self.btn_sync = ctk.CTkButton(
+            self.sync_frame,
+            text="☁  Sincronizar",
+            font=FONTS.BASE_BOLD(),
+            fg_color=COLORS["primary"],
+            hover_color=COLORS["primary_hover"],
+            text_color="#FFFFFF",
+            height=36,
+            corner_radius=8,
+            command=self._handle_sync
+        )
+        self.btn_sync.pack(fill="x", pady=(0, 4))
+        
+        self.lbl_sync = ctk.CTkLabel(
+            self.sync_frame, 
+            text=f"Última sync:\n{ultima_sync}", 
+            font=FONTS.XS(), 
+            text_color=COLORS["sidebar_text"],
+            justify="center"
+        )
+        self.lbl_sync.pack()
 
         # ── Sección inferior: usuario + logout ─────────────────
         bottom = ctk.CTkFrame(self, fg_color="transparent", corner_radius=0)
@@ -197,3 +228,49 @@ class Sidebar(ctk.CTkFrame):
         root = self.winfo_toplevel()
         if hasattr(root, "_handle_logout"):
             root._handle_logout()
+
+    def _handle_sync(self):
+        """Inicia el proceso de sincronización en un hilo secundario."""
+        self.btn_sync.configure(state="disabled", text="☁  Sincronizando...")
+        self.lbl_sync.configure(text="Por favor espere...")
+        
+        # Ejecutar en segundo plano
+        thread = threading.Thread(target=self._run_sync_task)
+        thread.daemon = True
+        thread.start()
+        
+    def _run_sync_task(self):
+        """Tarea que corre en background."""
+        resultado = sincronizar()
+        # Volver al hilo principal para actualizar la UI
+        self.after(0, lambda: self._on_sync_finished(resultado))
+        
+    def _on_sync_finished(self, resultado: dict):
+        """Actualiza la UI tras la sincronización."""
+        self.btn_sync.configure(state="normal", text="☁  Sincronizar")
+        
+        if resultado.get("exito"):
+            fecha = resultado.get("fecha")
+            regs = resultado.get("registros_sincronizados", 0)
+            self.lbl_sync.configure(text=f"Última sync:\n{fecha}")
+            try:
+                CTkMessagebox(
+                    title="Sincronización Exitosa", 
+                    message=f"Se sincronizaron {regs} registros correctamente a MongoDB Atlas.\n\nFecha: {fecha}", 
+                    icon="check",
+                    option_1="OK"
+                )
+            except Exception:
+                pass
+        else:
+            error_msg = resultado.get("error", "Error desconocido")
+            self.lbl_sync.configure(text=f"Error en sync")
+            try:
+                CTkMessagebox(
+                    title="Error de Sincronización", 
+                    message=f"No se pudo sincronizar.\nDetalle: {error_msg}", 
+                    icon="cancel",
+                    option_1="OK"
+                )
+            except Exception:
+                pass

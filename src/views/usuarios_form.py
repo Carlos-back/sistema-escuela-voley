@@ -6,6 +6,7 @@ views/usuarios_form.py — Formulario nuevo/edición de usuario
 import customtkinter as ctk
 import re
 from theme import COLORS, FONTS, RADIUS, make_button, make_entry, make_label, make_card, make_divider
+from services.auth import PREGUNTAS_SEGURIDAD
 
 
 class UsuariosFormView(ctk.CTkFrame):
@@ -83,9 +84,12 @@ class UsuariosFormView(ctk.CTkFrame):
         # Fila 4: Contraseña
         self._add_password_field(card, 4)
 
+        # Fila 5: Preguntas de seguridad
+        self._add_security_questions(card, 5)
+
         # ── Botones ───────────────────────────────────────────
         btn_frame = ctk.CTkFrame(card, fg_color="transparent")
-        btn_frame.grid(row=5, column=0, columnspan=2, sticky="e",
+        btn_frame.grid(row=6, column=0, columnspan=2, sticky="e",
                        padx=20, pady=(8, 24))
 
         make_button(btn_frame, text="Cancelar", variant="secondary",
@@ -192,6 +196,39 @@ class UsuariosFormView(ctk.CTkFrame):
         self._strength_label = make_label(strength_row, "", variant="caption")
         self._strength_label.pack(side="left", padx=(8, 0))
 
+    def _add_security_questions(self, parent, row: int):
+        self._security_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        self._security_frame.grid(row=row, column=0, columnspan=2, sticky="ew", padx=20, pady=(12, 6))
+        self._security_frame.grid_columnconfigure((0, 1), weight=1)
+        
+        make_label(self._security_frame, "🛡 Preguntas de Seguridad (Recuperación) *", variant="label").grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+            
+        self._preguntas_vars = []
+        self._respuestas_entries = []
+        self._preguntas_error = make_label(self._security_frame, "", variant="error")
+        
+        for i in range(3):
+            # OptionMenu para la pregunta
+            var = ctk.StringVar(value=PREGUNTAS_SEGURIDAD[i])
+            self._preguntas_vars.append(var)
+            opt = ctk.CTkOptionMenu(
+                self._security_frame, variable=var, values=PREGUNTAS_SEGURIDAD,
+                font=FONTS.BASE(), height=42, corner_radius=RADIUS.MD,
+                fg_color=COLORS["white"], button_color=COLORS["primary"], button_hover_color=COLORS["primary_hover"],
+                text_color=COLORS["text_dark"], dropdown_fg_color=COLORS["white"], dropdown_text_color=COLORS["text_dark"],
+                dropdown_hover_color=COLORS["primary_light"]
+            )
+            opt.grid(row=i+1, column=0, sticky="ew", padx=(0, 10), pady=4)
+            
+            # Entry para la respuesta
+            entry = make_entry(self._security_frame, placeholder=f"Respuesta {i+1}")
+            entry.grid(row=i+1, column=1, sticky="ew", pady=4)
+            entry.bind("<KeyRelease>", lambda e: self._validate_security_questions())
+            self._respuestas_entries.append(entry)
+            
+        self._preguntas_error.grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 0))
+
     # ──────────────────────────────────────────────────────────
     # Validaciones
     # ──────────────────────────────────────────────────────────
@@ -229,11 +266,33 @@ class UsuariosFormView(ctk.CTkFrame):
             err_label.configure(text="✓" if valor else "", text_color=COLORS["success"])
             return True
 
+    def _validate_security_questions(self) -> bool:
+        if self._modo_edicion:
+            return True # No obligatorias en edición por ahora
+            
+        # Verificar respuestas no vacías
+        respuestas = [e.get().strip() for e in self._respuestas_entries]
+        if any(not r for r in respuestas):
+            self._preguntas_error.configure(text="⚠  Todas las respuestas son obligatorias", text_color=COLORS["error"])
+            return False
+            
+        # Verificar preguntas no repetidas
+        preguntas = [v.get() for v in self._preguntas_vars]
+        if len(set(preguntas)) != 3:
+            self._preguntas_error.configure(text="⚠  No puedes repetir la misma pregunta", text_color=COLORS["error"])
+            return False
+            
+        self._preguntas_error.configure(text="✓", text_color=COLORS["success"])
+        return True
+
     def _validate_all(self) -> bool:
         campos = ["dni", "nombre", "apellido", "email"]
         if not self._modo_edicion:
             campos.append("password")
-        return all(self._validate_field(c) for c in campos)
+            
+        validos = [self._validate_field(c) for c in campos]
+        validos.append(self._validate_security_questions())
+        return all(validos)
 
     def _update_strength(self, pwd: str):
         fuerza = sum([
@@ -271,6 +330,12 @@ class UsuariosFormView(ctk.CTkFrame):
             "rol":      self._rol_var.get(),
             "password": self._pw_entry.get().strip() or None,
         }
+        if not self._modo_edicion:
+            datos["preguntas"] = [
+                {"pregunta": self._preguntas_vars[0].get(), "respuesta": self._respuestas_entries[0].get().strip()},
+                {"pregunta": self._preguntas_vars[1].get(), "respuesta": self._respuestas_entries[1].get().strip()},
+                {"pregunta": self._preguntas_vars[2].get(), "respuesta": self._respuestas_entries[2].get().strip()}
+            ]
         self._on_registrar(datos)
 
     # ──────────────────────────────────────────────────────────
@@ -285,6 +350,10 @@ class UsuariosFormView(ctk.CTkFrame):
             text="Modificá los datos del usuario. El DNI no puede cambiarse.")
         self._submit_btn.configure(text="  ✔  Guardar Cambios")
 
+        # Habilitar DNI temporalmente para poder modificar su texto
+        if "dni" in self._campos:
+            self._campos["dni"].configure(state="normal")
+
         for campo_id, key in [("dni", "dni"), ("nombre", "nombre"),
                                ("apellido", "apellido"), ("email", "email")]:
             e = self._campos.get(campo_id)
@@ -295,6 +364,10 @@ class UsuariosFormView(ctk.CTkFrame):
         self._campos["dni"].configure(state="disabled", fg_color="#F3F4F6")
         self._rol_var.set(usuario.get("rol", "Administrador"))
         self._pw_entry.delete(0, "end")
+        
+        # Ocultar preguntas de seguridad en edición (el admin no las ve ni las edita)
+        if hasattr(self, '_security_frame'):
+            self._security_frame.grid_remove()
 
     def limpiar(self):
         """Resetea el formulario al estado de nuevo usuario."""
@@ -319,3 +392,13 @@ class UsuariosFormView(ctk.CTkFrame):
         for bar in self._strength_bars:
             bar.configure(fg_color=COLORS["border"])
         self._strength_label.configure(text="")
+        
+        for i, var in enumerate(self._preguntas_vars):
+            var.set(PREGUNTAS_SEGURIDAD[i])
+        for entry in self._respuestas_entries:
+            entry.delete(0, "end")
+        self._preguntas_error.configure(text="")
+        
+        # Mostrar preguntas de seguridad al crear
+        if hasattr(self, '_security_frame'):
+            self._security_frame.grid()

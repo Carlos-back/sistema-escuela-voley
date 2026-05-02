@@ -1,0 +1,27 @@
+# Archivos de entorno virtual
+venv/
+env/
+.venv/
+
+# Archivos de configuración y credenciales locales
+.env
+
+# Base de datos y logs (SQLite y JSON)
+data/
+*.db
+sync_log.json
+
+# Archivos compilados de Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Scripts de prueba con credenciales quemadas
+crear_admin.py
+test_*.py
+
+# Archivos temporales de IDE y SO
+.vscode/
+.idea/
+.DS_Store
+trace.txt

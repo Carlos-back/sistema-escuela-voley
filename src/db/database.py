@@ -83,6 +83,18 @@ def init_db():
       activo INTEGER DEFAULT 1 -- 1: activo, 0: inactivo
     );
 
+    CREATE TABLE IF NOT EXISTS PreguntasSeguridad (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id_usuario INTEGER NOT NULL,
+      pregunta_1 TEXT NOT NULL,
+      respuesta_1 TEXT NOT NULL,
+      pregunta_2 TEXT NOT NULL,
+      respuesta_2 TEXT NOT NULL,
+      pregunta_3 TEXT NOT NULL,
+      respuesta_3 TEXT NOT NULL,
+      FOREIGN KEY (id_usuario) REFERENCES Usuarios(id_usuario) ON UPDATE CASCADE ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS Movimientos (
       id_movimiento INTEGER PRIMARY KEY AUTOINCREMENT,
       tipo TEXT NOT NULL CHECK(tipo IN ('ingreso', 'egreso')),

@@ -102,7 +102,7 @@ class FlamingoApp(ctk.CTk):
         )
         self.views["usuarios_listado"] = UsuariosListadoView(
             self.content_frame,
-            on_nuevo=lambda: self.show_view("usuarios_form"),
+            on_nuevo=self._handle_nuevo_usuario,
             on_editar=self._handle_editar_usuario,
         )
         self.views["usuarios_form"] = UsuariosFormView(
@@ -158,6 +158,10 @@ class FlamingoApp(ctk.CTk):
         self._init_main_views()
         self.show_view("dashboard")
 
+    def _handle_nuevo_usuario(self):
+        self.views["usuarios_form"].limpiar()
+        self.show_view("usuarios_form")
+
     def _handle_editar_usuario(self, usuario: dict):
         self.views["usuarios_form"].cargar_usuario(usuario)
         self.show_view("usuarios_form")
@@ -166,8 +170,9 @@ class FlamingoApp(ctk.CTk):
         """Maneja la creación o edición de un usuario en la BD."""
         if self.views["usuarios_form"]._modo_edicion:
             # Edición
+            id_u = datos.get("id_usuario")
             exito = user_service.editar_usuario(
-                id_usuario=datos.get("id_usuario"),
+                id_usuario=id_u,
                 usuario=datos["dni"],
                 nombre=datos["nombre"],
                 apellido=datos["apellido"],
@@ -177,7 +182,7 @@ class FlamingoApp(ctk.CTk):
             )
         else:
             # Nuevo
-            exito = user_service.crear_usuario(
+            id_u = user_service.crear_usuario(
                 usuario=datos["dni"],
                 nombre=datos["nombre"],
                 apellido=datos["apellido"],
@@ -185,6 +190,10 @@ class FlamingoApp(ctk.CTk):
                 contrasena=datos["password"] or "123456",
                 rol=datos["rol"].lower()
             )
+            exito = bool(id_u)
+
+        if exito and datos.get("preguntas"):
+            auth_service.guardar_preguntas_seguridad(id_u, datos["preguntas"])
         
         if exito:
             if "usuarios_listado" in self.views:
