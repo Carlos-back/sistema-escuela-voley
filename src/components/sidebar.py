@@ -23,6 +23,7 @@ class Sidebar(ctk.CTkFrame):
 
     MENU_ITEMS = [
         ("dashboard",        "Inicio",           "🏠",  None),
+        ("grupos_listado",   "Grupos",           "🏷",  ["administrador", "profesor"]),
         ("alumnos",          "Alumnos",          "🎓",  None),
         ("pagos",            "Pagos",            "💳",  None),
         ("usuarios_listado", "Gestión Usuarios", "👥",  ["administrador"]),

@@ -19,6 +19,50 @@ def get_connection():
         print(f"Error conectando a SQLite: {e}")
         return None
 
+def _migrar_grupos(conn, cursor):
+    """
+    Reconstruye la tabla Grupos si conserva el esquema viejo
+    (CHECK fijo sobre nombre_grupo y/o sin columna 'estado').
+    SQLite no permite eliminar un CHECK con ALTER TABLE, por lo que se
+    crea una tabla nueva, se copian los datos y se renombra.
+    """
+    row = cursor.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='Grupos'"
+    ).fetchone()
+    if not row:
+        return
+
+    # Normalizamos sin espacios para detectar el CHECK específico de nombre_grupo
+    sql_norm = (row[0] or "").upper().replace(" ", "")
+    cols = [c[1] for c in cursor.execute("PRAGMA table_info(Grupos)").fetchall()]
+
+    tiene_check_viejo = "CHECK(NOMBRE_GRUPO" in sql_norm
+    falta_estado = "estado" not in cols
+
+    if not (tiene_check_viejo or falta_estado):
+        return  # Ya está migrada
+
+    # Desactivar FK para poder dropear/renombrar sin romper Alumnos.id_grupo
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = OFF;")
+    cursor.executescript("""
+        CREATE TABLE Grupos_new (
+          id_grupo INTEGER PRIMARY KEY AUTOINCREMENT,
+          nombre_grupo TEXT NOT NULL,
+          horario TEXT NOT NULL,
+          descripcion TEXT,
+          estado TEXT NOT NULL DEFAULT 'activo' CHECK(estado IN ('activo', 'inactivo'))
+        );
+        INSERT INTO Grupos_new (id_grupo, nombre_grupo, horario, descripcion, estado)
+          SELECT id_grupo, nombre_grupo, horario, descripcion, 'activo' FROM Grupos;
+        DROP TABLE Grupos;
+        ALTER TABLE Grupos_new RENAME TO Grupos;
+    """)
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = ON;")
+    print("Migración de Grupos completada (nombre libre + columna estado).")
+
+
 def init_db():
     """Inicializa la base de datos creando las tablas si no existen."""
     conn = get_connection()
@@ -31,9 +75,10 @@ def init_db():
     cursor.executescript("""
     CREATE TABLE IF NOT EXISTS Grupos (
       id_grupo INTEGER PRIMARY KEY AUTOINCREMENT,
-      nombre_grupo TEXT NOT NULL CHECK(nombre_grupo IN ('Infantil', 'Juvenil', 'Adultos')),
+      nombre_grupo TEXT NOT NULL,
       horario TEXT NOT NULL,
-      descripcion TEXT
+      descripcion TEXT,
+      estado TEXT NOT NULL DEFAULT 'activo' CHECK(estado IN ('activo', 'inactivo'))
     );
 
     CREATE TABLE IF NOT EXISTS Alumnos (
@@ -121,8 +166,23 @@ def init_db():
         fecha_operacion DATETIME DEFAULT CURRENT_TIMESTAMP,
         sincronizado INTEGER DEFAULT 0 -- 0: no, 1: sí
     );
+
+    -- Tabla de auditoría (registro de acciones de los usuarios)
+    CREATE TABLE IF NOT EXISTS Auditoria (
+        id_auditoria INTEGER PRIMARY KEY AUTOINCREMENT,
+        usuario TEXT,
+        accion TEXT NOT NULL,          -- 'INSERT', 'UPDATE', 'DELETE'
+        entidad TEXT NOT NULL,         -- ej. 'Grupos'
+        id_entidad INTEGER,
+        datos TEXT,                    -- snapshot en JSON
+        fecha DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
     """)
     
+    # --- MIGRACIÓN Grupos: quitar CHECK fijo del nombre y agregar 'estado' ---
+    # SQLite no permite DROP de un CHECK con ALTER; se reconstruye la tabla.
+    _migrar_grupos(conn, cursor)
+
     # Insertar grupos por defecto si no existen
     cursor.execute("SELECT COUNT(*) FROM Grupos")
     if cursor.fetchone()[0] == 0:

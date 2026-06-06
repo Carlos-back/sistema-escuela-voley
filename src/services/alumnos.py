@@ -78,12 +78,12 @@ def baja_logica_alumno(id_alumno, nuevo_estado='inactivo'):
     return editar_alumno(id_alumno, {'estado': nuevo_estado})
 
 def obtener_grupos():
-    """Retorna los grupos disponibles."""
+    """Retorna los grupos disponibles para inscripción (solo activos)."""
     conn = get_connection()
     if not conn: return []
     try:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM Grupos")
+        cursor.execute("SELECT * FROM Grupos WHERE estado = 'activo' ORDER BY nombre_grupo")
         return [dict(row) for row in cursor.fetchall()]
     finally:
         conn.close()

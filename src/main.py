@@ -21,11 +21,15 @@ from views.recuperar import RecuperarView
 from views.dashboard import DashboardView
 from views.usuarios_listado import UsuariosListadoView
 from views.usuarios_form import UsuariosFormView
+from views.grupos_listado import GruposListadoView
+from views.grupos_form import GruposFormView
+from views.grupos_detalle import GruposDetalleView
 from views.perfil import PerfilView
 from components.sidebar import Sidebar
 from CTkMessagebox import CTkMessagebox
 import services.auth as auth_service
 import services.usuarios as user_service
+import services.grupos as grupos_service
 from db.database import init_db
 
 
@@ -110,13 +114,37 @@ class FlamingoApp(ctk.CTk):
             on_cancelar=lambda: self.show_view("usuarios_listado"),
             on_registrar=self._handle_registrar_usuario,
         )
+        rol_actual = (self.current_user or {}).get("rol", "")
+        self.views["grupos_listado"] = GruposListadoView(
+            self.content_frame,
+            rol=rol_actual,
+            on_nuevo=self._handle_nuevo_grupo,
+            on_editar=self._handle_editar_grupo,
+            on_desactivar=self._handle_desactivar_grupo,
+            on_reactivar=self._handle_reactivar_grupo,
+            on_ver=self._handle_ver_grupo,
+        )
+        self.views["grupos_form"] = GruposFormView(
+            self.content_frame,
+            on_cancelar=lambda: self.show_view("grupos_listado"),
+            on_registrar=self._handle_registrar_grupo,
+        )
+        self.views["grupos_detalle"] = GruposDetalleView(
+            self.content_frame,
+            rol=rol_actual,
+            on_volver=lambda: self.show_view("grupos_listado"),
+            on_editar=self._handle_editar_grupo,
+            on_desactivar=self._handle_desactivar_grupo,
+            on_reactivar=self._handle_reactivar_grupo,
+        )
         self.views["perfil"] = PerfilView(
             self.content_frame,
             user=self.current_user,
             on_guardado=self._handle_perfil_guardado,
         )
 
-        for view in ["dashboard", "usuarios_listado", "usuarios_form", "perfil"]:
+        for view in ["dashboard", "usuarios_listado", "usuarios_form",
+                     "grupos_listado", "grupos_form", "grupos_detalle", "perfil"]:
             self.views[view].grid(row=0, column=0, sticky="nsew")
             self.views[view].grid_remove()
 
@@ -129,7 +157,8 @@ class FlamingoApp(ctk.CTk):
             if name in self.views:
                 self.views[name].place_forget()
 
-        for name in ["dashboard", "usuarios_listado", "usuarios_form", "perfil"]:
+        for name in ["dashboard", "usuarios_listado", "usuarios_form",
+                     "grupos_listado", "grupos_form", "grupos_detalle", "perfil"]:
             if name in self.views:
                 self.views[name].grid_remove()
 
@@ -203,6 +232,82 @@ class FlamingoApp(ctk.CTk):
         else:
             CTkMessagebox(title="Error", message="No se pudo procesar la solicitud.", icon="cancel")
 
+    def _handle_nuevo_grupo(self):
+        self.views["grupos_form"].limpiar()
+        self.show_view("grupos_form")
+
+    def _handle_editar_grupo(self, grupo: dict):
+        self.views["grupos_form"].cargar_grupo(grupo)
+        self.show_view("grupos_form")
+
+    def _handle_ver_grupo(self, grupo: dict):
+        """Abre el detalle de un grupo (HU05) con el conteo de alumnos activos."""
+        detalle = grupos_service.obtener_detalle_grupo(grupo["id_grupo"])
+        if not detalle:
+            CTkMessagebox(title="Error", message="No se encontró el grupo.",
+                          icon="cancel", option_1="OK")
+            return
+        self.views["grupos_detalle"].cargar(detalle)
+        self.show_view("grupos_detalle")
+
+    def _handle_registrar_grupo(self, datos: dict):
+        """Crea (HU01) o modifica (HU02) un grupo y registra la auditoría."""
+        usuario_actual = (self.current_user or {}).get("usuario")
+
+        if self.views["grupos_form"]._modo_edicion:
+            exito, mensaje = grupos_service.editar_grupo(
+                id_grupo=datos["id_grupo"],
+                nombre=datos["nombre"],
+                horario=datos["horario"],
+                descripcion=datos["descripcion"],
+                usuario=usuario_actual,
+            )
+            titulo_ok = "Grupo actualizado"
+        else:
+            exito, mensaje = grupos_service.crear_grupo(
+                nombre=datos["nombre"],
+                horario=datos["horario"],
+                descripcion=datos["descripcion"],
+                usuario=usuario_actual,
+            )
+            titulo_ok = "Grupo creado"
+
+        if exito:
+            if "grupos_listado" in self.views:
+                self.views["grupos_listado"].refrescar()
+            self.show_view("grupos_listado")
+            CTkMessagebox(title=titulo_ok, message=mensaje,
+                          icon="check", option_1="OK")
+        else:
+            # Mostramos el error en el formulario (ej. "El nombre del grupo ya existe")
+            self.views["grupos_form"].mostrar_error(mensaje)
+
+    def _handle_desactivar_grupo(self, grupo: dict):
+        """Baja lógica de un grupo (HU03)."""
+        usuario_actual = (self.current_user or {}).get("usuario")
+        exito, mensaje = grupos_service.desactivar_grupo(
+            id_grupo=grupo["id_grupo"], usuario=usuario_actual)
+        self._mostrar_resultado_grupo(exito, mensaje)
+
+    def _handle_reactivar_grupo(self, grupo: dict):
+        """Reactivación de un grupo inactivo (HU03)."""
+        usuario_actual = (self.current_user or {}).get("usuario")
+        exito, mensaje = grupos_service.reactivar_grupo(
+            id_grupo=grupo["id_grupo"], usuario=usuario_actual)
+        self._mostrar_resultado_grupo(exito, mensaje)
+
+    def _mostrar_resultado_grupo(self, exito: bool, mensaje: str):
+        """Refresca el listado, vuelve a él y muestra el resultado de la operación."""
+        if "grupos_listado" in self.views:
+            self.views["grupos_listado"].refrescar()
+        self.show_view("grupos_listado")
+        CTkMessagebox(
+            title="Listo" if exito else "Atención",
+            message=mensaje,
+            icon="check" if exito else "warning",
+            option_1="OK",
+        )
+
     def _handle_perfil_guardado(self, datos: dict):
         """Actualiza los datos del perfil en la BD."""
         if self.current_user:
@@ -222,7 +327,8 @@ class FlamingoApp(ctk.CTk):
         """Cierra la sesión y limpia el estado."""
         auth_service.logout()
         self.current_user = None
-        for name in ["dashboard", "usuarios_listado", "usuarios_form", "perfil"]:
+        for name in ["dashboard", "usuarios_listado", "usuarios_form",
+                     "grupos_listado", "grupos_form", "grupos_detalle", "perfil"]:
             if name in self.views:
                 self.views[name].destroy()
                 del self.views[name]
