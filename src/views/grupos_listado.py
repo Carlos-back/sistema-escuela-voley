@@ -119,12 +119,20 @@ class GruposListadoView(ctk.CTkFrame):
         inactivos = len(self._grupos) - activos
         return f"  {activos} activo{'s' if activos != 1 else ''}  ·  {inactivos} inactivo{'s' if inactivos != 1 else ''}"
 
+    def _configurar_columnas(self, contenedor):
+        """Distribuye el ancho: 'Descripción' se estira, el resto usa minsize.
+        Garantiza que la tabla ocupe todo el ancho disponible."""
+        for i, (col, w) in enumerate(self._COL_WIDTHS.items()):
+            contenedor.grid_columnconfigure(
+                i, minsize=w, weight=(1 if col == "Descripción" else 0))
+
     def _build_header_row(self, parent):
         hr = ctk.CTkFrame(parent, fg_color="#F8FAFC", corner_radius=0)
         hr.grid(row=0, column=0, sticky="ew")
-        for i, (col, w) in enumerate(self._COL_WIDTHS.items()):
-            cf = ctk.CTkFrame(hr, fg_color="transparent", width=w, height=32)
-            cf.grid(row=0, column=i, padx=(20 if i == 0 else 4, 4), pady=5, sticky="w")
+        self._configurar_columnas(hr)
+        for i, col in enumerate(self._COL_WIDTHS):
+            cf = ctk.CTkFrame(hr, fg_color="transparent", height=32)
+            cf.grid(row=0, column=i, padx=(20 if i == 0 else 4, 4), pady=5, sticky="ew")
             cf.pack_propagate(False)
             make_label(cf, col.upper(), variant="overline", anchor="w"
                        ).pack(side="left", fill="x", expand=True)
@@ -167,47 +175,43 @@ class GruposListadoView(ctk.CTkFrame):
 
         row_f = ctk.CTkFrame(parent, fg_color=bg, corner_radius=0)
         row_f.grid(row=idx, column=0, sticky="ew")
+        self._configurar_columnas(row_f)
 
         ctk.CTkFrame(row_f, height=1, fg_color=COLORS["border"],
                      corner_radius=0).place(relx=0, rely=1.0, relwidth=1, y=-1)
 
         # --- NOMBRE ---
-        nf = ctk.CTkFrame(row_f, fg_color="transparent",
-                          width=self._COL_WIDTHS["Nombre"], height=row_h)
-        nf.grid(row=0, column=0, padx=(20, 4), pady=2, sticky="w")
+        nf = ctk.CTkFrame(row_f, fg_color="transparent", height=row_h)
+        nf.grid(row=0, column=0, padx=(20, 4), pady=2, sticky="ew")
         nf.pack_propagate(False)
         make_label(nf, grupo["nombre_grupo"], variant="bold", anchor="w"
                    ).pack(side="left", fill="x", expand=True)
 
         # --- HORARIO ---
-        hf = ctk.CTkFrame(row_f, fg_color="transparent",
-                          width=self._COL_WIDTHS["Horario"], height=row_h)
-        hf.grid(row=0, column=1, padx=4, pady=2, sticky="w")
+        hf = ctk.CTkFrame(row_f, fg_color="transparent", height=row_h)
+        hf.grid(row=0, column=1, padx=4, pady=2, sticky="ew")
         hf.pack_propagate(False)
         make_label(hf, grupo["horario"], variant="body", anchor="w"
                    ).pack(side="left", fill="x", expand=True)
 
-        # --- DESCRIPCIÓN ---
-        df = ctk.CTkFrame(row_f, fg_color="transparent",
-                          width=self._COL_WIDTHS["Descripción"], height=row_h)
-        df.grid(row=0, column=2, padx=4, pady=2, sticky="w")
+        # --- DESCRIPCIÓN (columna elástica) ---
+        df = ctk.CTkFrame(row_f, fg_color="transparent", height=row_h)
+        df.grid(row=0, column=2, padx=4, pady=2, sticky="ew")
         df.pack_propagate(False)
         make_label(df, grupo.get("descripcion") or "—", variant="muted", anchor="w"
                    ).pack(side="left", fill="x", expand=True)
 
         # --- ESTADO ---
-        sf = ctk.CTkFrame(row_f, fg_color="transparent",
-                          width=self._COL_WIDTHS["Estado"], height=row_h)
-        sf.grid(row=0, column=3, padx=4, pady=2, sticky="w")
+        sf = ctk.CTkFrame(row_f, fg_color="transparent", height=row_h)
+        sf.grid(row=0, column=3, padx=4, pady=2, sticky="ew")
         sf.pack_propagate(False)
         es_activo = grupo.get("estado", "activo") == "activo"
         make_badge(sf, text="Activo" if es_activo else "Inactivo",
                    variant="success" if es_activo else "neutral").pack(side="left")
 
         # --- ACCIONES (Ver para todos; el resto solo admin, contextual por estado) ---
-        af = ctk.CTkFrame(row_f, fg_color="transparent",
-                          width=self._COL_WIDTHS["Acciones"], height=row_h)
-        af.grid(row=0, column=4, padx=4, pady=2, sticky="w")
+        af = ctk.CTkFrame(row_f, fg_color="transparent", height=row_h)
+        af.grid(row=0, column=4, padx=4, pady=2, sticky="ew")
         af.pack_propagate(False)
 
         make_button(af, text="👁 Ver", variant="ghost", size="sm",
