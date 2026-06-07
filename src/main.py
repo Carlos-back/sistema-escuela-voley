@@ -24,12 +24,15 @@ from views.usuarios_form import UsuariosFormView
 from views.grupos_listado import GruposListadoView
 from views.grupos_form import GruposFormView
 from views.grupos_detalle import GruposDetalleView
+from views.alumnos_listado import AlumnosListadoView
+from views.alumnos_form import AlumnosFormView
 from views.perfil import PerfilView
 from components.sidebar import Sidebar
 from CTkMessagebox import CTkMessagebox
 import services.auth as auth_service
 import services.usuarios as user_service
 import services.grupos as grupos_service
+import services.alumnos as alumnos_service
 from db.database import init_db
 
 
@@ -137,6 +140,15 @@ class FlamingoApp(ctk.CTk):
             on_desactivar=self._handle_desactivar_grupo,
             on_reactivar=self._handle_reactivar_grupo,
         )
+        self.views["alumnos_listado"] = AlumnosListadoView(
+            self.content_frame,
+            on_nuevo=self._handle_nuevo_alumno,
+        )
+        self.views["alumnos_form"] = AlumnosFormView(
+            self.content_frame,
+            on_cancelar=lambda: self.show_view("alumnos_listado"),
+            on_registrar=self._handle_registrar_alumno,
+        )
         self.views["perfil"] = PerfilView(
             self.content_frame,
             user=self.current_user,
@@ -144,7 +156,8 @@ class FlamingoApp(ctk.CTk):
         )
 
         for view in ["dashboard", "usuarios_listado", "usuarios_form",
-                     "grupos_listado", "grupos_form", "grupos_detalle", "perfil"]:
+                     "grupos_listado", "grupos_form", "grupos_detalle",
+                     "alumnos_listado", "alumnos_form", "perfil"]:
             self.views[view].grid(row=0, column=0, sticky="nsew")
             self.views[view].grid_remove()
 
@@ -158,7 +171,8 @@ class FlamingoApp(ctk.CTk):
                 self.views[name].place_forget()
 
         for name in ["dashboard", "usuarios_listado", "usuarios_form",
-                     "grupos_listado", "grupos_form", "grupos_detalle", "perfil"]:
+                     "grupos_listado", "grupos_form", "grupos_detalle",
+                     "alumnos_listado", "alumnos_form", "perfil"]:
             if name in self.views:
                 self.views[name].grid_remove()
 
@@ -308,6 +322,26 @@ class FlamingoApp(ctk.CTk):
             option_1="OK",
         )
 
+    def _handle_nuevo_alumno(self):
+        """Abre el formulario de alta de alumno con los grupos activos cargados."""
+        grupos = alumnos_service.obtener_grupos()
+        self.views["alumnos_form"].limpiar()
+        self.views["alumnos_form"].set_grupos(grupos)
+        self.show_view("alumnos_form")
+
+    def _handle_registrar_alumno(self, datos: dict):
+        """Registra un alumno y lo vincula a su grupo."""
+        datos["usuario"] = (self.current_user or {}).get("usuario")
+        exito, mensaje = alumnos_service.registrar_alumno(datos)
+        if exito:
+            if "alumnos_listado" in self.views:
+                self.views["alumnos_listado"].refrescar()
+            self.show_view("alumnos_listado")
+            CTkMessagebox(title="Alumno registrado", message=mensaje,
+                          icon="check", option_1="OK")
+        else:
+            self.views["alumnos_form"].mostrar_error(mensaje)
+
     def _handle_perfil_guardado(self, datos: dict):
         """Actualiza los datos del perfil en la BD."""
         if self.current_user:
@@ -328,7 +362,8 @@ class FlamingoApp(ctk.CTk):
         auth_service.logout()
         self.current_user = None
         for name in ["dashboard", "usuarios_listado", "usuarios_form",
-                     "grupos_listado", "grupos_form", "grupos_detalle", "perfil"]:
+                     "grupos_listado", "grupos_form", "grupos_detalle",
+                     "alumnos_listado", "alumnos_form", "perfil"]:
             if name in self.views:
                 self.views[name].destroy()
                 del self.views[name]

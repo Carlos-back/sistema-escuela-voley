@@ -91,10 +91,47 @@ class GruposDetalleView(ctk.CTkFrame):
         # Espaciado inferior
         ctk.CTkLabel(card, text="", height=6).grid(row=5, column=0)
 
+        # ── Card de alumnos activos vinculados ────────────────
+        alumnos_card = make_card(body)
+        alumnos_card.grid(row=1, column=0, sticky="ew", padx=20, pady=10)
+        alumnos_card.grid_columnconfigure(0, weight=1)
+        self._alumnos_titulo = make_label(alumnos_card, "👥  Alumnos activos", variant="h3")
+        self._alumnos_titulo.grid(row=0, column=0, sticky="w", padx=20, pady=(20, 8))
+        make_divider(alumnos_card).grid(row=1, column=0, sticky="ew", padx=20, pady=(0, 8))
+        self._alumnos_lista = ctk.CTkFrame(alumnos_card, fg_color="transparent")
+        self._alumnos_lista.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 16))
+        self._alumnos_lista.grid_columnconfigure(0, weight=1)
+
         # ── Acciones (gated por rol) ──────────────────────────
         self._actions_frame = ctk.CTkFrame(body, fg_color="transparent")
-        self._actions_frame.grid(row=1, column=0, sticky="ew", padx=20, pady=(0, 20))
+        self._actions_frame.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 20))
         self._actions_frame.grid_columnconfigure(0, weight=1)
+
+    def _render_alumnos(self, alumnos: list):
+        """Pinta la lista de alumnos activos vinculados al grupo."""
+        for w in self._alumnos_lista.winfo_children():
+            w.destroy()
+
+        self._alumnos_titulo.configure(text=f"👥  Alumnos activos ({len(alumnos)})")
+
+        if not alumnos:
+            make_label(self._alumnos_lista, "Este grupo no tiene alumnos activos.",
+                       variant="muted").grid(row=0, column=0, sticky="w", pady=4)
+            return
+
+        for idx, a in enumerate(alumnos):
+            fila = ctk.CTkFrame(
+                self._alumnos_lista,
+                fg_color=COLORS["white"] if idx % 2 == 0 else "#FAFAFA",
+                corner_radius=6)
+            fila.grid(row=idx, column=0, sticky="ew", pady=2)
+            fila.grid_columnconfigure(0, weight=1)
+
+            nombre = f"{a.get('apellido','')}, {a.get('nombre','')}".strip(", ")
+            make_label(fila, f"🎓  {nombre}", variant="body", anchor="w"
+                       ).grid(row=0, column=0, sticky="w", padx=12, pady=8)
+            make_label(fila, f"DNI {a.get('dni','—')}", variant="caption", anchor="e"
+                       ).grid(row=0, column=1, sticky="e", padx=12, pady=8)
 
     def _add_dato(self, parent, row, etiqueta):
         cont = ctk.CTkFrame(parent, fg_color="transparent")
@@ -117,6 +154,9 @@ class GruposDetalleView(ctk.CTkFrame):
         self._horario_label.configure(text=grupo.get("horario", "—"))
         self._descripcion_label.configure(text=grupo.get("descripcion") or "—")
         self._alumnos_label.configure(text=str(grupo.get("alumnos_activos", 0)))
+
+        # Lista de alumnos activos vinculados
+        self._render_alumnos(grupo.get("alumnos", []))
 
         # Badge de estado
         for w in self._estado_container.winfo_children():

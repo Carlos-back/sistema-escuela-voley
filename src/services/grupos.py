@@ -297,10 +297,17 @@ def obtener_detalle_grupo(id_grupo):
             return None
         grupo = dict(row)
         cursor.execute(
-            "SELECT COUNT(*) FROM Alumnos WHERE id_grupo = ? AND estado = 'activo'",
+            """
+            SELECT id_alumno, nombre, apellido, dni
+            FROM Alumnos
+            WHERE id_grupo = ? AND estado = 'activo'
+            ORDER BY apellido, nombre
+            """,
             (id_grupo,),
         )
-        grupo["alumnos_activos"] = cursor.fetchone()[0]
+        alumnos = [dict(r) for r in cursor.fetchall()]
+        grupo["alumnos"] = alumnos
+        grupo["alumnos_activos"] = len(alumnos)
         return grupo
     finally:
         conn.close()

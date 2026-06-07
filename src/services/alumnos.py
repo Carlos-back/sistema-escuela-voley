@@ -1,27 +1,86 @@
+import re
 from db.database import get_connection
+from services.auditoria import registrar as registrar_auditoria
+
 
 def registrar_alumno(datos: dict):
     """
-    Registra un nuevo alumno.
+    Registra un nuevo alumno y lo vincula a un grupo.
     datos: {nombre, apellido, dni, fecha_nacimiento, telefono, telefono_tutor, direccion, id_grupo}
+
+    Reglas:
+      - nombre, apellido, dni, fecha_nacimiento e id_grupo son obligatorios.
+      - dni: solo dígitos, 7 u 8, y único.
+      - el grupo debe existir y estar activo.
+      - se audita el alta (entidad 'Alumnos').
+
+    Retorna (exito: bool, mensaje: str).
     """
+    nombre = (datos.get('nombre') or "").strip()
+    apellido = (datos.get('apellido') or "").strip()
+    dni = (datos.get('dni') or "").strip()
+    fecha_nac = (datos.get('fecha_nacimiento') or "").strip()
+    id_grupo = datos.get('id_grupo')
+
+    # Validaciones de obligatorios
+    if not nombre:
+        return False, "El nombre es obligatorio."
+    if not apellido:
+        return False, "El apellido es obligatorio."
+    if not dni:
+        return False, "El DNI es obligatorio."
+    if not (dni.isdigit() and len(dni) in (7, 8)):
+        return False, "El DNI debe tener 7 u 8 dígitos numéricos."
+    if not fecha_nac:
+        return False, "La fecha de nacimiento es obligatoria."
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", fecha_nac):
+        return False, "La fecha debe tener formato AAAA-MM-DD."
+    if not id_grupo:
+        return False, "Debe seleccionar un grupo."
+
     conn = get_connection()
-    if not conn: return False
-    
+    if not conn:
+        return False, "No se pudo conectar con la base de datos."
+
     try:
         cursor = conn.cursor()
+
+        # DNI único
+        cursor.execute("SELECT 1 FROM Alumnos WHERE dni = ?", (dni,))
+        if cursor.fetchone():
+            return False, "Ya existe un alumno con ese DNI."
+
+        # El grupo debe existir y estar activo
+        cursor.execute("SELECT estado FROM Grupos WHERE id_grupo = ?", (id_grupo,))
+        grupo = cursor.fetchone()
+        if not grupo:
+            return False, "El grupo seleccionado no existe."
+        if grupo["estado"] != "activo":
+            return False, "El grupo seleccionado no está activo."
+
         cursor.execute("""
             INSERT INTO Alumnos (nombre, apellido, dni, fecha_nacimiento, telefono, telefono_tutor, direccion, id_grupo)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            datos['nombre'], datos['apellido'], datos['dni'], datos['fecha_nacimiento'],
-            datos.get('telefono'), datos.get('telefono_tutor'), datos.get('direccion'), datos['id_grupo']
+            nombre, apellido, dni, fecha_nac,
+            (datos.get('telefono') or "").strip() or None,
+            (datos.get('telefono_tutor') or "").strip() or None,
+            (datos.get('direccion') or "").strip() or None,
+            id_grupo,
         ))
+        id_alumno = cursor.lastrowid
+
+        registrar_auditoria(
+            accion="INSERT", entidad="Alumnos", id_entidad=id_alumno,
+            datos={"nombre": nombre, "apellido": apellido, "dni": dni, "id_grupo": id_grupo},
+            usuario=datos.get("usuario"), conn=conn,
+        )
+
         conn.commit()
-        return True
+        return True, "Alumno registrado correctamente."
     except Exception as e:
         print(f"Error al registrar alumno: {e}")
-        return False
+        return False, "Ocurrió un error al registrar el alumno."
     finally:
         conn.close()
 
