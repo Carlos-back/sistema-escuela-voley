@@ -1,6 +1,6 @@
 """
 Flamingo Sys — Gestión Integral Voley
-views/alumnos_form.py — Formulario de Alta de Alumno (vinculado a un grupo)
+views/alumnos_form.py — Formulario de Alta y Edición de Alumno (HU01 / HU02)
 """
 
 import customtkinter as ctk
@@ -12,17 +12,23 @@ PLACEHOLDER_GRUPO = "Seleccioná un grupo"
 
 class AlumnosFormView(ctk.CTkFrame):
     """
-    Formulario para dar de alta un alumno y vincularlo a un grupo.
+    Formulario para dar de alta (HU01) o editar (HU02) un alumno.
 
     Parámetros:
         parent       : frame contenedor
         on_cancelar  : callback() al presionar Cancelar
-        on_registrar : callback(datos_dict) al confirmar
+        on_registrar : callback(datos_dict) al confirmar. En modo edición
+                       `datos_dict` incluye la clave 'id_alumno'.
 
-    El combo de grupo se llena con `set_grupos()` (solo grupos activos).
+    El combo de grupo se llena con `set_grupos()`. Se usa `limpiar()` para
+    entrar en modo alta y `cargar_alumno()` para entrar en modo edición.
     """
 
     _REQUERIDOS = ("nombre", "apellido", "dni", "fecha_nacimiento")
+
+    # Campos de texto del formulario, en el orden en que se arman.
+    _CAMPOS_TEXTO = ("nombre", "apellido", "dni", "fecha_nacimiento",
+                     "telefono", "telefono_tutor", "direccion")
 
     def __init__(self, parent, on_cancelar, on_registrar):
         super().__init__(parent, fg_color=COLORS["bg"], corner_radius=0)
@@ -31,6 +37,8 @@ class AlumnosFormView(ctk.CTkFrame):
         self._campos = {}
         self._errores = {}
         self._grupos_map = {}   # display -> id_grupo
+        self._modo_edicion = False
+        self._current_id = None
         self._build_ui()
 
     # ──────────────────────────────────────────────────────────
@@ -42,11 +50,12 @@ class AlumnosFormView(ctk.CTkFrame):
         header.grid_columnconfigure(0, weight=1)
         ctk.CTkFrame(header, height=4, fg_color=COLORS["primary"],
                      corner_radius=0).grid(row=0, column=0, sticky="ew")
-        make_label(header, "➕  Nuevo Alumno", variant="h2"
-                   ).grid(row=1, column=0, sticky="w", padx=28, pady=(16, 4))
-        make_label(header, "Completá los datos del alumno y asignalo a un grupo.",
-                   variant="muted"
-                   ).grid(row=2, column=0, sticky="w", padx=28, pady=(0, 16))
+        self._titulo = make_label(header, "➕  Nuevo Alumno", variant="h2")
+        self._titulo.grid(row=1, column=0, sticky="w", padx=28, pady=(16, 4))
+        self._subtitulo = make_label(
+            header, "Completá los datos del alumno y asignalo a un grupo.",
+            variant="muted")
+        self._subtitulo.grid(row=2, column=0, sticky="w", padx=28, pady=(0, 16))
 
         body = ctk.CTkScrollableFrame(self, fg_color=COLORS["bg"], corner_radius=0,
                                       scrollbar_button_color=COLORS["primary"],
@@ -131,16 +140,31 @@ class AlumnosFormView(ctk.CTkFrame):
         self._grupo_error.grid(row=2, column=0, sticky="w")
 
     # ──────────────────────────────────────────────────────────
-    # Carga de grupos (solo activos)
+    # Carga de grupos
     # ──────────────────────────────────────────────────────────
-    def set_grupos(self, grupos: list):
-        """Llena el combo con los grupos activos. grupos: lista de dicts."""
-        self._grupos_map = {
-            f"{g['nombre_grupo']} — {g['horario']}": g["id_grupo"] for g in grupos
-        }
+    def set_grupos(self, grupos: list, seleccionado=None):
+        """
+        Llena el combo con los grupos recibidos (normalmente solo activos).
+
+        `seleccionado`: id_grupo a dejar preseleccionado; se usa al editar.
+        Un grupo inactivo se marca en la etiqueta para que quede a la vista.
+        """
+        self._grupos_map = {}
+        for g in grupos:
+            etiqueta = f"{g['nombre_grupo']} — {g['horario']}"
+            if g.get("estado") and g["estado"] != "activo":
+                etiqueta += "  (inactivo)"
+            self._grupos_map[etiqueta] = g["id_grupo"]
+
         valores = list(self._grupos_map.keys()) or [PLACEHOLDER_GRUPO]
         self._grupo_menu.configure(values=valores)
-        self._grupo_var.set(PLACEHOLDER_GRUPO if self._grupos_map else PLACEHOLDER_GRUPO)
+
+        etiqueta_sel = PLACEHOLDER_GRUPO
+        if seleccionado is not None:
+            etiqueta_sel = next(
+                (k for k, v in self._grupos_map.items() if v == seleccionado),
+                PLACEHOLDER_GRUPO)
+        self._grupo_var.set(etiqueta_sel)
 
         if not self._grupos_map:
             self._error_general.configure(
@@ -218,22 +242,30 @@ class AlumnosFormView(ctk.CTkFrame):
         validos.append(self._validate_field("grupo"))
         if not all(validos):
             return
-        datos = {
-            "nombre":          self._campos["nombre"].get().strip(),
-            "apellido":        self._campos["apellido"].get().strip(),
-            "dni":             self._campos["dni"].get().strip(),
-            "fecha_nacimiento": self._campos["fecha_nacimiento"].get().strip(),
-            "telefono":        self._campos["telefono"].get().strip(),
-            "telefono_tutor":  self._campos["telefono_tutor"].get().strip(),
-            "direccion":       self._campos["direccion"].get().strip(),
-            "id_grupo":        self._grupo_seleccionado(),
-        }
+        datos = {campo: self._campos[campo].get().strip()
+                 for campo in self._CAMPOS_TEXTO}
+        datos["id_grupo"] = self._grupo_seleccionado()
+        if self._modo_edicion:
+            datos["id_alumno"] = self._current_id
         self._on_registrar(datos)
 
     def mostrar_error(self, mensaje: str):
         self._error_general.configure(text=f"⚠  {mensaje}")
 
-    def limpiar(self):
+    def _aplicar_modo(self):
+        """Ajusta título, subtítulo y botón según el modo alta/edición."""
+        if self._modo_edicion:
+            self._titulo.configure(text="✏  Editar Alumno")
+            self._subtitulo.configure(
+                text="Modificá los datos del alumno o cambiá su grupo.")
+            self._submit_btn.configure(text="  ✔  Guardar Cambios")
+        else:
+            self._titulo.configure(text="➕  Nuevo Alumno")
+            self._subtitulo.configure(
+                text="Completá los datos del alumno y asignalo a un grupo.")
+            self._submit_btn.configure(text="  ✔  Registrar Alumno")
+
+    def _resetear_campos(self):
         self._error_general.configure(text="")
         for campo_id, entry in self._campos.items():
             entry.delete(0, "end")
@@ -241,4 +273,31 @@ class AlumnosFormView(ctk.CTkFrame):
             self._errores[campo_id].configure(text="")
         self._grupo_var.set(PLACEHOLDER_GRUPO)
         self._grupo_error.configure(text="")
+
+    def limpiar(self):
+        """Vacía el formulario y lo deja en modo alta (HU01)."""
+        self._modo_edicion = False
+        self._current_id = None
+        self._resetear_campos()
+        self._aplicar_modo()
+        self._refrescar_estado_submit()
+
+    def cargar_alumno(self, alumno: dict, grupos: list):
+        """
+        Precarga los datos del alumno y entra en modo edición (HU02).
+
+        `grupos` debe incluir el grupo actual del alumno aunque esté inactivo,
+        para no reasignarlo en silencio.
+        """
+        self._resetear_campos()
+        self._modo_edicion = True
+        self._current_id = alumno.get("id_alumno")
+
+        for campo in self._CAMPOS_TEXTO:
+            valor = alumno.get(campo)
+            if valor is not None:
+                self._campos[campo].insert(0, str(valor))
+
+        self.set_grupos(grupos, seleccionado=alumno.get("id_grupo"))
+        self._aplicar_modo()
         self._refrescar_estado_submit()

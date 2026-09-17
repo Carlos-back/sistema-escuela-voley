@@ -142,7 +142,11 @@ class FlamingoApp(ctk.CTk):
         )
         self.views["alumnos_listado"] = AlumnosListadoView(
             self.content_frame,
+            rol=rol_actual,
             on_nuevo=self._handle_nuevo_alumno,
+            on_editar=self._handle_editar_alumno,
+            on_desactivar=self._handle_desactivar_alumno,
+            on_reactivar=self._handle_reactivar_alumno,
         )
         self.views["alumnos_form"] = AlumnosFormView(
             self.content_frame,
@@ -329,18 +333,67 @@ class FlamingoApp(ctk.CTk):
         self.views["alumnos_form"].set_grupos(grupos)
         self.show_view("alumnos_form")
 
+    def _handle_editar_alumno(self, alumno: dict):
+        """Abre el formulario con los datos del alumno precargados (HU02)."""
+        actual = alumnos_service.obtener_alumno(alumno["id_alumno"])
+        if not actual:
+            CTkMessagebox(title="Error", message="No se encontró el alumno.",
+                          icon="cancel", option_1="OK")
+            return
+        # El grupo actual se incluye aunque esté inactivo, para no reasignarlo.
+        grupos = alumnos_service.obtener_grupos(incluir=actual["id_grupo"])
+        self.views["alumnos_form"].cargar_alumno(actual, grupos)
+        self.show_view("alumnos_form")
+
     def _handle_registrar_alumno(self, datos: dict):
-        """Registra un alumno y lo vincula a su grupo."""
-        datos["usuario"] = (self.current_user or {}).get("usuario")
-        exito, mensaje = alumnos_service.registrar_alumno(datos)
+        """Da de alta (HU01) o guarda los cambios de un alumno (HU02)."""
+        usuario_actual = (self.current_user or {}).get("usuario")
+        id_alumno = datos.pop("id_alumno", None)
+
+        if id_alumno is not None:
+            exito, mensaje = alumnos_service.editar_alumno(
+                id_alumno, datos, usuario=usuario_actual)
+            titulo = "Alumno actualizado"
+        else:
+            datos["usuario"] = usuario_actual
+            exito, mensaje = alumnos_service.registrar_alumno(datos)
+            titulo = "Alumno registrado"
+
         if exito:
             if "alumnos_listado" in self.views:
                 self.views["alumnos_listado"].refrescar()
             self.show_view("alumnos_listado")
-            CTkMessagebox(title="Alumno registrado", message=mensaje,
+            CTkMessagebox(title=titulo, message=mensaje,
                           icon="check", option_1="OK")
         else:
             self.views["alumnos_form"].mostrar_error(mensaje)
+
+    def _handle_desactivar_alumno(self, alumno: dict):
+        """Baja lógica de un alumno (HU04)."""
+        usuario_actual = (self.current_user or {}).get("usuario")
+        exito, mensaje = alumnos_service.baja_logica_alumno(
+            id_alumno=alumno["id_alumno"], nuevo_estado="inactivo",
+            usuario=usuario_actual)
+        self._mostrar_resultado_alumno(exito, mensaje)
+
+    def _handle_reactivar_alumno(self, alumno: dict):
+        """Reactivación de un alumno inactivo (HU04)."""
+        usuario_actual = (self.current_user or {}).get("usuario")
+        exito, mensaje = alumnos_service.baja_logica_alumno(
+            id_alumno=alumno["id_alumno"], nuevo_estado="activo",
+            usuario=usuario_actual)
+        self._mostrar_resultado_alumno(exito, mensaje)
+
+    def _mostrar_resultado_alumno(self, exito: bool, mensaje: str):
+        """Refresca el listado de alumnos y notifica el resultado de la acción."""
+        if exito and "alumnos_listado" in self.views:
+            self.views["alumnos_listado"].refrescar()
+        CTkMessagebox(
+            title="Listo" if exito else "Atención",
+            message=mensaje,
+            icon="check" if exito else "warning",
+            option_1="OK",
+        )
 
     def _handle_perfil_guardado(self, datos: dict):
         """Actualiza los datos del perfil en la BD."""
