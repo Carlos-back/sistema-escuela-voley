@@ -1,6 +1,19 @@
 import sqlite3
 import os
+import unicodedata
 from config.config import Config
+
+
+def normalizar_texto(valor):
+    """
+    Minúsculas y sin acentos ('Gómez' -> 'gomez'), para búsquedas.
+    El LIKE de SQLite no ignora acentos ni pasa a minúsculas fuera de ASCII.
+    """
+    if valor is None:
+        return None
+    sin_marcas = unicodedata.normalize("NFKD", str(valor))
+    return "".join(c for c in sin_marcas if not unicodedata.combining(c)).lower()
+
 
 def get_connection():
     """Retorna una conexión a la base de datos SQLite."""
@@ -14,6 +27,8 @@ def get_connection():
         conn.execute("PRAGMA journal_mode = WAL;")
         # Retornar filas como diccionarios
         conn.row_factory = sqlite3.Row
+        # Disponible en SQL como normalizar(col), para búsquedas sin acentos
+        conn.create_function("normalizar", 1, normalizar_texto, deterministic=True)
         return conn
     except sqlite3.Error as e:
         print(f"Error conectando a SQLite: {e}")

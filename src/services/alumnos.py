@@ -5,7 +5,7 @@ Lógica de negocio del ABM de la entidad transaccional Alumno (HU01–HU04).
 
 import re
 from datetime import date, datetime
-from db.database import get_connection
+from db.database import get_connection, normalizar_texto
 from services.auditoria import registrar as registrar_auditoria
 
 # ── Mensajes canónicos de validación ────────────────────────────────
@@ -216,11 +216,12 @@ def listar_alumnos(filtro_estado=None, busqueda=''):
 
     busqueda = (busqueda or "").strip()
     if busqueda:
+        # Sin distinguir acentos ni mayúsculas: 'gomez' encuentra a 'Gómez'.
         condiciones.append(
-            "(a.nombre LIKE ? OR a.apellido LIKE ? OR a.dni LIKE ?"
-            " OR (a.nombre || ' ' || a.apellido) LIKE ?)"
+            "(normalizar(a.nombre) LIKE ? OR normalizar(a.apellido) LIKE ? OR a.dni LIKE ?"
+            " OR normalizar(a.nombre || ' ' || a.apellido) LIKE ?)"
         )
-        term = f"%{busqueda}%"
+        term = f"%{normalizar_texto(busqueda)}%"
         params.extend([term, term, term, term])
 
     if condiciones:
