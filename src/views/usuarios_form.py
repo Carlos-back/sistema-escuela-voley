@@ -54,6 +54,8 @@ class UsuariosFormView(ctk.CTkFrame):
             variant="muted",
         )
         self._subtitulo_label.grid(row=2, column=0, sticky="w", padx=28, pady=(0, 16))
+        make_label(header, "(*) Campos obligatorios", variant="caption"
+                   ).grid(row=2, column=1, sticky="e", padx=28, pady=(0, 16))
 
         # ── Cuerpo scrollable ─────────────────────────────────
         body = ctk.CTkScrollableFrame(self, fg_color=COLORS["bg"], corner_radius=0,
@@ -160,8 +162,9 @@ class UsuariosFormView(ctk.CTkFrame):
                        sticky="ew", padx=20, pady=6)
         container.grid_columnconfigure(0, weight=1)
 
-        make_label(container, "🔒  Contraseña *", variant="label").grid(
-            row=0, column=0, sticky="w", pady=(0, 4))
+        # El (*) se quita en edición, donde la contraseña es opcional.
+        self._pw_label = make_label(container, "🔒  Contraseña *", variant="label")
+        self._pw_label.grid(row=0, column=0, sticky="w", pady=(0, 4))
 
         pw_row = ctk.CTkFrame(container, fg_color="transparent")
         pw_row.grid(row=1, column=0, sticky="ew")
@@ -363,6 +366,7 @@ class UsuariosFormView(ctk.CTkFrame):
 
         self._campos["dni"].configure(state="disabled", fg_color="#F3F4F6")
         self._rol_var.set(usuario.get("rol", "Administrador"))
+        self._pw_label.configure(text="🔒  Contraseña")
         self._pw_entry.delete(0, "end")
         
         # Ocultar preguntas de seguridad en edición (el admin no las ve ni las edita)
@@ -388,6 +392,7 @@ class UsuariosFormView(ctk.CTkFrame):
                 entry.configure(border_color=COLORS["border"])
 
         self._rol_var.set("Administrador")
+        self._pw_label.configure(text="🔒  Contraseña *")
         self._pw_entry.delete(0, "end")
         for bar in self._strength_bars:
             bar.configure(fg_color=COLORS["border"])

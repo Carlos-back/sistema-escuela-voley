@@ -92,7 +92,7 @@ class RecuperarView(ctk.CTkFrame):
         make_label(self.step1_frame, "Recuperar Contraseña", variant="h2").grid(row=1, column=0, padx=36)
         make_label(self.step1_frame, "Paso 1: Ingresá tu DNI para comenzar.", variant="muted", justify="center").grid(row=2, column=0, padx=36, pady=(6, 24))
 
-        make_label(self.step1_frame, "🪪  DNI", variant="label").grid(row=3, column=0, sticky="w", padx=36, pady=(0, 4))
+        make_label(self.step1_frame, "🪪  DNI *", variant="label").grid(row=3, column=0, sticky="w", padx=36, pady=(0, 4))
         
         self._dni_entry = make_entry(self.step1_frame, placeholder="Tu número de documento")
         self._dni_entry.grid(row=4, column=0, sticky="ew", padx=36, pady=(0, 4))
@@ -121,9 +121,9 @@ class RecuperarView(ctk.CTkFrame):
         self.preguntas_actuales = preguntas
         
         # Cargar preguntas en el paso 2
-        self._q1_label.configure(text=f"1. {preguntas[0]}")
-        self._q2_label.configure(text=f"2. {preguntas[1]}")
-        self._q3_label.configure(text=f"3. {preguntas[2]}")
+        self._q1_label.configure(text=f"1. {preguntas[0]} *")
+        self._q2_label.configure(text=f"2. {preguntas[1]} *")
+        self._q3_label.configure(text=f"3. {preguntas[2]} *")
         
         # Resetear errores
         self._clear_error(self._dni_entry, self._dni_error)
@@ -194,7 +194,7 @@ class RecuperarView(ctk.CTkFrame):
         make_label(self.step3_frame, "Paso 3: Creá tu nueva contraseña.", variant="muted", justify="center").grid(row=2, column=0, padx=36, pady=(6, 16))
 
         # Contraseña
-        make_label(self.step3_frame, "🔒 Nueva Contraseña", variant="label").grid(row=3, column=0, sticky="w", padx=36, pady=(0, 4))
+        make_label(self.step3_frame, "🔒 Nueva Contraseña *", variant="label").grid(row=3, column=0, sticky="w", padx=36, pady=(0, 4))
         
         pw_row = ctk.CTkFrame(self.step3_frame, fg_color="transparent")
         pw_row.grid(row=4, column=0, sticky="ew", padx=36, pady=(0, 12))
@@ -212,7 +212,7 @@ class RecuperarView(ctk.CTkFrame):
         self._pw_toggle.grid(row=0, column=1, padx=(8, 0))
         
         # Confirmar
-        make_label(self.step3_frame, "🔁 Confirmar Contraseña", variant="label").grid(row=5, column=0, sticky="w", padx=36, pady=(0, 4))
+        make_label(self.step3_frame, "🔁 Confirmar Contraseña *", variant="label").grid(row=5, column=0, sticky="w", padx=36, pady=(0, 4))
         self._conf_entry = make_entry(self.step3_frame, placeholder="Repetí la contraseña", show="●")
         self._conf_entry.grid(row=6, column=0, sticky="ew", padx=36, pady=(0, 4))
         

@@ -48,13 +48,15 @@ class PerfilView(ctk.CTkFrame):
         header.grid_columnconfigure(0, weight=1)
 
         ctk.CTkFrame(header, height=4, fg_color=COLORS["primary"],
-                     corner_radius=0).grid(row=0, column=0, sticky="ew")
+                     corner_radius=0).grid(row=0, column=0, columnspan=2, sticky="ew")
 
         make_label(header, "👤  Mi Perfil", variant="h2"
                    ).grid(row=1, column=0, sticky="w", padx=28, pady=(16, 4))
         make_label(header, "Editá tus datos personales. Tu DNI no puede modificarse.",
                    variant="muted"
                    ).grid(row=2, column=0, sticky="w", padx=28, pady=(0, 16))
+        make_label(header, "(*) Campos obligatorios", variant="caption"
+                   ).grid(row=2, column=1, sticky="e", padx=28, pady=(0, 16))
 
         # ── Body scrollable ───────────────────────────────────
         body = ctk.CTkScrollableFrame(self, fg_color=COLORS["bg"], corner_radius=0,
@@ -200,7 +202,8 @@ class PerfilView(ctk.CTkFrame):
     def _precargar_datos(self):
         """TODO: conectar con backend — datos frescos desde BD"""
         datos = {
-            "dni":    self._user.get("dni", ""),
+            # En la tabla Usuarios el DNI se guarda en la columna 'usuario'.
+            "dni":    self._user.get("usuario", ""),
             "rol":    self._user.get("rol", "").capitalize(),
             "nombre": self._user.get("nombre", ""),
             "email":  self._user.get("email", ""),

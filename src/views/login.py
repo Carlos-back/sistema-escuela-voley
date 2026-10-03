@@ -74,7 +74,7 @@ class LoginView(ctk.CTkFrame):
                    ).grid(row=1, column=0, sticky="w", padx=36, pady=(0, 24))
 
         # ── Campo DNI ─────────────────────────────────────────
-        make_label(card, "🪪  DNI", variant="label"
+        make_label(card, "🪪  DNI *", variant="label"
                    ).grid(row=2, column=0, sticky="w", padx=36, pady=(0, 4))
 
         self._dni_entry = make_entry(card, placeholder="Ingresá tu DNI")
@@ -86,7 +86,7 @@ class LoginView(ctk.CTkFrame):
         self._dni_error.grid(row=4, column=0, sticky="w", padx=36, pady=(0, 8))
 
         # ── Campo Contraseña ──────────────────────────────────
-        make_label(card, "🔒  Contraseña", variant="label"
+        make_label(card, "🔒  Contraseña *", variant="label"
                    ).grid(row=5, column=0, sticky="w", padx=36, pady=(0, 4))
 
         pw_frame = ctk.CTkFrame(card, fg_color="transparent")

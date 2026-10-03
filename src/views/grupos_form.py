@@ -48,7 +48,7 @@ class GruposFormView(ctk.CTkFrame):
         header.grid_columnconfigure(0, weight=1)
 
         ctk.CTkFrame(header, height=4, fg_color=COLORS["primary"],
-                     corner_radius=0).grid(row=0, column=0, sticky="ew")
+                     corner_radius=0).grid(row=0, column=0, columnspan=2, sticky="ew")
 
         self._titulo_label = make_label(header, "➕  Nuevo Grupo", variant="h2")
         self._titulo_label.grid(row=1, column=0, sticky="w", padx=28, pady=(16, 4))
@@ -57,6 +57,8 @@ class GruposFormView(ctk.CTkFrame):
             "Completá los datos para registrar un nuevo grupo en el sistema.",
             variant="muted")
         self._subtitulo_label.grid(row=2, column=0, sticky="w", padx=28, pady=(0, 16))
+        make_label(header, "(*) Campos obligatorios", variant="caption"
+                   ).grid(row=2, column=1, sticky="e", padx=28, pady=(0, 16))
 
         # ── Cuerpo scrollable ─────────────────────────────────
         body = ctk.CTkScrollableFrame(self, fg_color=COLORS["bg"], corner_radius=0,
