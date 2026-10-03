@@ -4,8 +4,8 @@ views/alumnos_form.py — Formulario de Alta y Edición de Alumno (HU01 / HU02)
 """
 
 import customtkinter as ctk
-import re
 from theme import COLORS, FONTS, RADIUS, make_button, make_entry, make_label, make_card, make_divider
+from services.alumnos import CAMPOS_INMUTABLES, validar_fecha_nacimiento, validar_telefono
 
 PLACEHOLDER_GRUPO = "Seleccioná un grupo"
 
@@ -25,6 +25,9 @@ class AlumnosFormView(ctk.CTkFrame):
     """
 
     _REQUERIDOS = ("nombre", "apellido", "dni", "fecha_nacimiento")
+
+    # Opcionales, pero si se completan deben tener formato válido.
+    _TELEFONOS = ("telefono", "telefono_tutor")
 
     # Campos de texto del formulario, en el orden en que se arman.
     _CAMPOS_TEXTO = ("nombre", "apellido", "dni", "fecha_nacimiento",
@@ -49,13 +52,15 @@ class AlumnosFormView(ctk.CTkFrame):
         header.grid(row=0, column=0, sticky="ew")
         header.grid_columnconfigure(0, weight=1)
         ctk.CTkFrame(header, height=4, fg_color=COLORS["primary"],
-                     corner_radius=0).grid(row=0, column=0, sticky="ew")
+                     corner_radius=0).grid(row=0, column=0, columnspan=2, sticky="ew")
         self._titulo = make_label(header, "➕  Nuevo Alumno", variant="h2")
         self._titulo.grid(row=1, column=0, sticky="w", padx=28, pady=(16, 4))
         self._subtitulo = make_label(
             header, "Completá los datos del alumno y asignalo a un grupo.",
             variant="muted")
         self._subtitulo.grid(row=2, column=0, sticky="w", padx=28, pady=(0, 16))
+        make_label(header, "(*) Campos obligatorios", variant="caption"
+                   ).grid(row=2, column=1, sticky="e", padx=28, pady=(0, 16))
 
         body = ctk.CTkScrollableFrame(self, fg_color=COLORS["bg"], corner_radius=0,
                                       scrollbar_button_color=COLORS["primary"],
@@ -178,7 +183,7 @@ class AlumnosFormView(ctk.CTkFrame):
     # ──────────────────────────────────────────────────────────
     def _on_field_change(self, campo_id):
         self._error_general.configure(text="")
-        if campo_id in self._REQUERIDOS:
+        if campo_id in self._REQUERIDOS + self._TELEFONOS:
             self._validate_field(campo_id)
         self._refrescar_estado_submit()
 
@@ -207,14 +212,13 @@ class AlumnosFormView(ctk.CTkFrame):
             elif not (valor.isdigit() and len(valor) in (7, 8)):
                 error = "Debe tener 7 u 8 dígitos numéricos"
         elif campo_id == "fecha_nacimiento":
-            if not valor:
-                error = "La fecha es obligatoria"
-            elif not re.match(r"^\d{4}-\d{2}-\d{2}$", valor):
-                error = "Formato AAAA-MM-DD"
+            error = validar_fecha_nacimiento(valor)
+        elif campo_id in self._TELEFONOS:
+            error = validar_telefono(valor)
 
         if error:
             entry.configure(border_color=COLORS["error"], border_width=2)
-            err_label.configure(text=f"⚠  {error}")
+            err_label.configure(text=f"⚠  {error.rstrip('.')}")
             return False
         entry.configure(border_color=COLORS["border"], border_width=2)
         err_label.configure(text="")
@@ -238,7 +242,7 @@ class AlumnosFormView(ctk.CTkFrame):
     # Submit / API pública
     # ──────────────────────────────────────────────────────────
     def _do_submit(self):
-        validos = [self._validate_field(c) for c in self._REQUERIDOS]
+        validos = [self._validate_field(c) for c in self._REQUERIDOS + self._TELEFONOS]
         validos.append(self._validate_field("grupo"))
         if not all(validos):
             return
@@ -257,7 +261,7 @@ class AlumnosFormView(ctk.CTkFrame):
         if self._modo_edicion:
             self._titulo.configure(text="✏  Editar Alumno")
             self._subtitulo.configure(
-                text="Modificá los datos del alumno o cambiá su grupo.")
+                text="Podés modificar los datos de contacto y el grupo.")
             self._submit_btn.configure(text="  ✔  Guardar Cambios")
         else:
             self._titulo.configure(text="➕  Nuevo Alumno")
@@ -268,6 +272,8 @@ class AlumnosFormView(ctk.CTkFrame):
     def _resetear_campos(self):
         self._error_general.configure(text="")
         for campo_id, entry in self._campos.items():
+            # Se habilita antes de borrar: un CTkEntry deshabilitado no se edita.
+            entry.configure(state="normal", fg_color=COLORS["white"])
             entry.delete(0, "end")
             entry.configure(border_color=COLORS["border"], border_width=2)
             self._errores[campo_id].configure(text="")
@@ -297,6 +303,10 @@ class AlumnosFormView(ctk.CTkFrame):
             valor = alumno.get(campo)
             if valor is not None:
                 self._campos[campo].insert(0, str(valor))
+
+        # Los datos de identidad solo se cargan en el alta.
+        for campo in CAMPOS_INMUTABLES:
+            self._campos[campo].configure(state="disabled", fg_color="#F3F4F6")
 
         self.set_grupos(grupos, seleccionado=alumno.get("id_grupo"))
         self._aplicar_modo()

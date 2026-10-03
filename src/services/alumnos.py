@@ -4,6 +4,7 @@ Lógica de negocio del ABM de la entidad transaccional Alumno (HU01–HU04).
 """
 
 import re
+from datetime import date, datetime
 from db.database import get_connection
 from services.auditoria import registrar as registrar_auditoria
 
@@ -15,6 +16,11 @@ MSG_DNI_FORMATO = "El DNI debe tener 7 u 8 dígitos numéricos."
 MSG_DNI_DUPLICADO = "Ya existe un alumno con ese DNI."
 MSG_FECHA_OBLIGATORIA = "La fecha de nacimiento es obligatoria."
 MSG_FECHA_FORMATO = "La fecha debe tener formato AAAA-MM-DD."
+MSG_FECHA_INEXISTENTE = "La fecha de nacimiento no es una fecha válida."
+MSG_FECHA_FUTURA = "La fecha de nacimiento no puede ser posterior a hoy."
+MSG_FECHA_EDAD = "La fecha de nacimiento indica una edad mayor a 100 años."
+MSG_TELEFONO_FORMATO = "El teléfono solo admite números, espacios, +, - y paréntesis."
+MSG_TELEFONO_LARGO = "El teléfono debe tener entre 8 y 15 dígitos."
 MSG_GRUPO_OBLIGATORIO = "Debe seleccionar un grupo."
 MSG_GRUPO_INEXISTENTE = "El grupo seleccionado no existe."
 MSG_GRUPO_INACTIVO = "El grupo seleccionado no está activo."
@@ -22,6 +28,53 @@ MSG_GRUPO_INACTIVO = "El grupo seleccionado no está activo."
 # Campos que el alta y la edición manipulan, en el orden de la tabla.
 _CAMPOS = ('nombre', 'apellido', 'dni', 'fecha_nacimiento',
            'telefono', 'telefono_tutor', 'direccion', 'id_grupo')
+
+EDAD_MAXIMA = 100
+
+# Datos de identidad: se cargan en el alta y no se modifican en la edición.
+CAMPOS_INMUTABLES = ('nombre', 'apellido', 'dni', 'fecha_nacimiento')
+MSG_CAMPOS_INMUTABLES = ("El nombre, apellido, DNI y fecha de nacimiento "
+                         "no pueden modificarse.")
+
+
+def validar_fecha_nacimiento(valor: str):
+    """
+    Valida la fecha de nacimiento (AAAA-MM-DD): que exista en el calendario,
+    que no sea futura y que no indique una edad mayor a EDAD_MAXIMA.
+    Compartida por el servicio y el formulario. Retorna el mensaje de error o None.
+    """
+    valor = (valor or "").strip()
+    if not valor:
+        return MSG_FECHA_OBLIGATORIA
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", valor):
+        return MSG_FECHA_FORMATO
+    try:
+        fecha = datetime.strptime(valor, "%Y-%m-%d").date()
+    except ValueError:
+        return MSG_FECHA_INEXISTENTE
+    hoy = date.today()
+    if fecha > hoy:
+        return MSG_FECHA_FUTURA
+    edad = hoy.year - fecha.year - ((hoy.month, hoy.day) < (fecha.month, fecha.day))
+    if edad > EDAD_MAXIMA:
+        return MSG_FECHA_EDAD
+    return None
+
+
+def validar_telefono(valor: str):
+    """
+    Valida un teléfono opcional: vacío es válido; si se informa, solo admite
+    dígitos, espacios, +, - y paréntesis, con 8 a 15 dígitos.
+    Retorna el mensaje de error o None.
+    """
+    valor = (valor or "").strip()
+    if not valor:
+        return None
+    if not re.match(r"^[\d\s+\-()]+$", valor):
+        return MSG_TELEFONO_FORMATO
+    if not 8 <= len(re.sub(r"\D", "", valor)) <= 15:
+        return MSG_TELEFONO_LARGO
+    return None
 
 
 def _normalizar_y_validar(datos: dict):
@@ -45,10 +98,13 @@ def _normalizar_y_validar(datos: dict):
         return None, MSG_DNI_OBLIGATORIO
     if not (dni.isdigit() and len(dni) in (7, 8)):
         return None, MSG_DNI_FORMATO
-    if not fecha_nac:
-        return None, MSG_FECHA_OBLIGATORIA
-    if not re.match(r"^\d{4}-\d{2}-\d{2}$", fecha_nac):
-        return None, MSG_FECHA_FORMATO
+    error = validar_fecha_nacimiento(fecha_nac)
+    if error:
+        return None, error
+    for campo in ('telefono', 'telefono_tutor'):
+        error = validar_telefono(datos.get(campo))
+        if error:
+            return None, error
     if not id_grupo:
         return None, MSG_GRUPO_OBLIGATORIO
 
@@ -64,16 +120,9 @@ def _normalizar_y_validar(datos: dict):
     }, None
 
 
-def _dni_duplicado(cursor, dni, excluir_id=None):
-    """
-    True si ya existe otro alumno con ese DNI.
-    `excluir_id` ignora el propio registro (necesario en la edición).
-    """
-    if excluir_id is None:
-        cursor.execute("SELECT 1 FROM Alumnos WHERE dni = ?", (dni,))
-    else:
-        cursor.execute("SELECT 1 FROM Alumnos WHERE dni = ? AND id_alumno != ?",
-                       (dni, excluir_id))
+def _dni_duplicado(cursor, dni):
+    """True si ya existe un alumno con ese DNI (el DNI no se edita, solo se valida en el alta)."""
+    cursor.execute("SELECT 1 FROM Alumnos WHERE dni = ?", (dni,))
     return cursor.fetchone() is not None
 
 
@@ -187,14 +236,14 @@ def listar_alumnos(filtro_estado=None, busqueda=''):
 
 
 def obtener_alumno(id_alumno):
-    """Retorna un alumno con el nombre de su grupo, o None si no existe."""
+    """Retorna un alumno con los datos de su grupo, o None si no existe."""
     conn = get_connection()
     if not conn:
         return None
     try:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT a.*, g.nombre_grupo, g.estado AS estado_grupo
+            SELECT a.*, g.nombre_grupo, g.horario, g.estado AS estado_grupo
             FROM Alumnos a
             JOIN Grupos g ON a.id_grupo = g.id_grupo
             WHERE a.id_alumno = ?
@@ -211,7 +260,8 @@ def editar_alumno(id_alumno, datos: dict, usuario=None):
 
     Reglas de negocio:
       - mismas validaciones de formato que el alta.
-      - el DNI debe ser único EXCLUYENDO el propio registro.
+      - los datos de identidad (nombre, apellido, DNI y fecha de nacimiento)
+        no se pueden modificar una vez registrado el alumno.
       - solo se puede mover el alumno a un grupo activo; si el grupo no
         cambia se acepta aunque esté inactivo, para no bloquear la edición
         del resto de los datos cuando el grupo fue dado de baja.
@@ -240,8 +290,8 @@ def editar_alumno(id_alumno, datos: dict, usuario=None):
             return False, "El alumno no existe."
         actual = dict(actual)
 
-        if _dni_duplicado(cursor, valores['dni'], excluir_id=id_alumno):
-            return False, MSG_DNI_DUPLICADO
+        if any(valores[campo] != actual[campo] for campo in CAMPOS_INMUTABLES):
+            return False, MSG_CAMPOS_INMUTABLES
 
         # El grupo solo se valida si realmente cambia (ver docstring).
         if valores['id_grupo'] != actual['id_grupo']:

@@ -26,6 +26,7 @@ from views.grupos_form import GruposFormView
 from views.grupos_detalle import GruposDetalleView
 from views.alumnos_listado import AlumnosListadoView
 from views.alumnos_form import AlumnosFormView
+from views.alumnos_detalle import AlumnosDetalleView
 from views.perfil import PerfilView
 from components.sidebar import Sidebar
 from CTkMessagebox import CTkMessagebox
@@ -147,11 +148,20 @@ class FlamingoApp(ctk.CTk):
             on_editar=self._handle_editar_alumno,
             on_desactivar=self._handle_desactivar_alumno,
             on_reactivar=self._handle_reactivar_alumno,
+            on_ver=self._handle_ver_alumno,
         )
         self.views["alumnos_form"] = AlumnosFormView(
             self.content_frame,
             on_cancelar=lambda: self.show_view("alumnos_listado"),
             on_registrar=self._handle_registrar_alumno,
+        )
+        self.views["alumnos_detalle"] = AlumnosDetalleView(
+            self.content_frame,
+            rol=rol_actual,
+            on_volver=lambda: self.show_view("alumnos_listado"),
+            on_editar=self._handle_editar_alumno,
+            on_desactivar=self._handle_desactivar_alumno,
+            on_reactivar=self._handle_reactivar_alumno,
         )
         self.views["perfil"] = PerfilView(
             self.content_frame,
@@ -161,7 +171,7 @@ class FlamingoApp(ctk.CTk):
 
         for view in ["dashboard", "usuarios_listado", "usuarios_form",
                      "grupos_listado", "grupos_form", "grupos_detalle",
-                     "alumnos_listado", "alumnos_form", "perfil"]:
+                     "alumnos_listado", "alumnos_form", "alumnos_detalle", "perfil"]:
             self.views[view].grid(row=0, column=0, sticky="nsew")
             self.views[view].grid_remove()
 
@@ -176,7 +186,7 @@ class FlamingoApp(ctk.CTk):
 
         for name in ["dashboard", "usuarios_listado", "usuarios_form",
                      "grupos_listado", "grupos_form", "grupos_detalle",
-                     "alumnos_listado", "alumnos_form", "perfil"]:
+                     "alumnos_listado", "alumnos_form", "alumnos_detalle", "perfil"]:
             if name in self.views:
                 self.views[name].grid_remove()
 
@@ -333,6 +343,16 @@ class FlamingoApp(ctk.CTk):
         self.views["alumnos_form"].set_grupos(grupos)
         self.show_view("alumnos_form")
 
+    def _handle_ver_alumno(self, alumno: dict):
+        """Abre el detalle de un alumno con los datos frescos de la BD."""
+        actual = alumnos_service.obtener_alumno(alumno["id_alumno"])
+        if not actual:
+            CTkMessagebox(title="Error", message="No se encontró el alumno.",
+                          icon="cancel", option_1="OK")
+            return
+        self.views["alumnos_detalle"].cargar(actual)
+        self.show_view("alumnos_detalle")
+
     def _handle_editar_alumno(self, alumno: dict):
         """Abre el formulario con los datos del alumno precargados (HU02)."""
         actual = alumnos_service.obtener_alumno(alumno["id_alumno"])
@@ -374,7 +394,7 @@ class FlamingoApp(ctk.CTk):
         exito, mensaje = alumnos_service.baja_logica_alumno(
             id_alumno=alumno["id_alumno"], nuevo_estado="inactivo",
             usuario=usuario_actual)
-        self._mostrar_resultado_alumno(exito, mensaje)
+        self._mostrar_resultado_alumno(exito, mensaje, alumno["id_alumno"])
 
     def _handle_reactivar_alumno(self, alumno: dict):
         """Reactivación de un alumno inactivo (HU04)."""
@@ -382,12 +402,20 @@ class FlamingoApp(ctk.CTk):
         exito, mensaje = alumnos_service.baja_logica_alumno(
             id_alumno=alumno["id_alumno"], nuevo_estado="activo",
             usuario=usuario_actual)
-        self._mostrar_resultado_alumno(exito, mensaje)
+        self._mostrar_resultado_alumno(exito, mensaje, alumno["id_alumno"])
 
-    def _mostrar_resultado_alumno(self, exito: bool, mensaje: str):
-        """Refresca el listado de alumnos y notifica el resultado de la acción."""
+    def _mostrar_resultado_alumno(self, exito: bool, mensaje: str, id_alumno=None):
+        """
+        Refresca el listado de alumnos (y el detalle, si muestra a ese alumno)
+        y notifica el resultado de la acción.
+        """
         if exito and "alumnos_listado" in self.views:
             self.views["alumnos_listado"].refrescar()
+        detalle = self.views.get("alumnos_detalle")
+        if exito and detalle and id_alumno is not None and detalle.id_actual == id_alumno:
+            actualizado = alumnos_service.obtener_alumno(id_alumno)
+            if actualizado:
+                detalle.cargar(actualizado)
         CTkMessagebox(
             title="Listo" if exito else "Atención",
             message=mensaje,
@@ -416,7 +444,7 @@ class FlamingoApp(ctk.CTk):
         self.current_user = None
         for name in ["dashboard", "usuarios_listado", "usuarios_form",
                      "grupos_listado", "grupos_form", "grupos_detalle",
-                     "alumnos_listado", "alumnos_form", "perfil"]:
+                     "alumnos_listado", "alumnos_form", "alumnos_detalle", "perfil"]:
             if name in self.views:
                 self.views[name].destroy()
                 del self.views[name]

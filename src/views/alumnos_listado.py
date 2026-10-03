@@ -22,6 +22,7 @@ class AlumnosListadoView(ctk.CTkFrame):
         on_editar     : callback(alumno) para abrir el formulario de edición
         on_desactivar : callback(alumno) baja lógica
         on_reactivar  : callback(alumno) reactivación
+        on_ver        : callback(alumno) para abrir el detalle (todos los roles)
     """
 
     # 'Alumno' es la columna elástica (weight)
@@ -35,18 +36,19 @@ class AlumnosListadoView(ctk.CTkFrame):
 
     _ESTADOS = {"Todos": None, "Activos": "activo", "Inactivos": "inactivo"}
 
-    def __init__(self, parent, rol, on_nuevo, on_editar, on_desactivar, on_reactivar):
+    def __init__(self, parent, rol, on_nuevo, on_editar, on_desactivar, on_reactivar, on_ver):
         super().__init__(parent, fg_color=COLORS["bg"], corner_radius=0)
         self._rol = (rol or "").lower()
         self._es_admin = self._rol == "administrador"
         self._on_nuevo = on_nuevo
+        self._on_ver = on_ver
         self._on_editar = on_editar
         self._on_desactivar = on_desactivar
         self._on_reactivar = on_reactivar
 
         self._col_widths = dict(self._COL_BASE)
-        if self._es_admin:
-            self._col_widths["Acciones"] = 210
+        # 'Ver' es para todos; Editar / Desactivar / Reactivar solo para admin.
+        self._col_widths["Acciones"] = 270 if self._es_admin else 80
 
         self._alumnos = []
 
@@ -197,18 +199,23 @@ class AlumnosListadoView(ctk.CTkFrame):
         make_badge(sf, text="Activo" if es_activo else "Inactivo",
                    variant="success" if es_activo else "neutral").pack(side="left")
 
-        # Acciones (HU02 / HU04) — solo admin, contextuales según el estado
-        if not self._es_admin:
-            return
+        # Acciones — 'Ver' para todos; el resto (HU02 / HU04) solo admin,
+        # contextual según el estado
         af = ctk.CTkFrame(row_f, fg_color="transparent", height=row_h)
         af.grid(row=0, column=4, padx=4, pady=2, sticky="ew")
         af.pack_propagate(False)
+        make_button(af, text="👁 Ver", variant="ghost", size="sm",
+                    border_color=COLORS["border"], border_width=1, width=58,
+                    text_color=COLORS["text_dark"],
+                    command=lambda a=alumno: self._on_ver(a)).pack(side="left", padx=(0, 6))
+        if not self._es_admin:
+            return
         if es_activo:
             make_button(af, text="✏ Editar", variant="ghost", size="sm",
                         border_color=COLORS["primary"], border_width=1, width=72,
                         command=lambda a=alumno: self._on_editar(a)).pack(side="left", padx=(0, 6))
-            make_button(af, text="🚫 Baja", variant="ghost", size="sm",
-                        border_color=COLORS["error"], border_width=1, width=70,
+            make_button(af, text="🚫 Desactivar", variant="ghost", size="sm",
+                        border_color=COLORS["error"], border_width=1, width=100,
                         text_color=COLORS["error"],
                         command=lambda a=alumno: self._confirmar_desactivar(a)).pack(side="left")
         else:
