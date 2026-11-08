@@ -67,8 +67,8 @@ class PerfilView(ctk.CTkFrame):
 
         # ── Card avatar ───────────────────────────────────────
         nombre    = self._user.get("nombre", "Usuario")
-        rol       = self._user.get("rol", "").capitalize()
-        email_val = self._user.get("email", "")
+        rol       = (self._user.get("rol") or "").capitalize()
+        email_val = (self._user.get("email", "") or "")
 
         avatar_card = make_card(body)
         avatar_card.grid(row=0, column=0, sticky="ew", padx=20, pady=(20, 10))
@@ -203,9 +203,9 @@ class PerfilView(ctk.CTkFrame):
         """TODO: conectar con backend — datos frescos desde BD"""
         datos = {
             # En la tabla Usuarios el DNI se guarda en la columna 'usuario'.
-            "dni":    self._user.get("usuario", ""),
+            "dni":    (self._user.get("usuario", "") or ""),
             "rol":    self._user.get("rol", "").capitalize(),
-            "nombre": self._user.get("nombre", ""),
+            "nombre": (self._user.get("nombre", "") or ""),
             "email":  self._user.get("email", ""),
         }
         for campo_id, valor in datos.items():

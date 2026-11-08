@@ -14,6 +14,7 @@ Cómo funciona:
      y el reintento no duplica nada (el upsert es idempotente).
 """
 
+from pymongo.errors import ConfigurationError
 import datetime
 import json
 import os
@@ -37,6 +38,10 @@ _lock = threading.Lock()
 # ══════════════════════════════════════════════════════════════════
 # Conexión
 # ══════════════════════════════════════════════════════════════════
+MSG_URI_INVALIDA = ("No se encontró el cluster de MongoDB Atlas. Revisá que MONGODB_URI "
+                    "en el archivo .env sea la cadena de conexión real del cluster")
+
+
 def verificar_conexion():
     """
     True si hay una URI configurada y conexión a internet. Se prueba un
@@ -201,6 +206,11 @@ def sincronizar(automatica=False):
                 print(f"Advertencia: no se pudo guardar el log en la nube: {e}")
 
         resultado["exito"] = True
+        return resultado
+    except ConfigurationError as e:
+        # URI mal armada o cluster inexistente (por ejemplo, la URI de ejemplo
+        # "cluster.mongodb.net" que viene en .env.example).
+        resultado["error"] = f"{MSG_URI_INVALIDA} ({e})"
         return resultado
     except Exception as e:
         resultado["error"] = str(e)
