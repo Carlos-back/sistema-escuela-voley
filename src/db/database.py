@@ -90,6 +90,17 @@ TABLAS_SINCRONIZADAS = {
     "Auditoria": "id_auditoria",
 }
 
+# Claves foráneas de las tablas sincronizadas: columna local -> tabla padre.
+# En la nube no viajan los id locales (cada equipo numera distinto) sino el
+# uuid del registro padre, en la columna "<columna>_uuid".
+CLAVES_FORANEAS = {
+    "Alumnos": {"id_grupo": "Grupos"},
+    "Inscripciones": {"id_alumno": "Alumnos", "id_grupo": "Grupos"},
+    "Pagos": {"id_alumno": "Alumnos"},
+    "Asistencias": {"id_alumno": "Alumnos"},
+    "PreguntasSeguridad": {"id_usuario": "Usuarios"},
+}
+
 
 def _crear_inscripciones(cursor):
     """
@@ -152,23 +163,40 @@ def _crear_triggers_sync(cursor):
     Registra en SyncLog cada alta o modificación de las tablas sincronizadas
     (HU05). La sincronización sube solo lo pendiente en lugar de todo.
 
+    Cada tabla sincronizada tiene además una columna uuid: el identificador
+    global del registro, igual en todos los equipos y en la nube.
+
+    Los triggers no anotan nada mientras se aplican datos bajados de la nube
+    (fila 'aplicando_descarga' en SyncEstado), así lo descargado no se vuelve
+    a subir.
+
     La primera vez que se crean los triggers se marcan como pendientes todos
     los registros existentes (carga inicial), así la nube queda completa.
     """
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS ix_synclog_pendiente ON SyncLog(sincronizado)")
+    cursor.execute(
+        "CREATE TABLE IF NOT EXISTS SyncEstado (clave TEXT PRIMARY KEY, valor TEXT)")
 
     for tabla, pk in TABLAS_SINCRONIZADAS.items():
-        nombre_trigger = f"trg_sync_{tabla.lower()}_ins"
+        columnas = [c[1] for c in cursor.execute(f"PRAGMA table_info({tabla})")]
+        if "uuid" not in columnas:
+            cursor.execute(f"ALTER TABLE {tabla} ADD COLUMN uuid TEXT")
+        cursor.execute(
+            f"CREATE UNIQUE INDEX IF NOT EXISTS ux_{tabla.lower()}_uuid ON {tabla}(uuid)")
+
         ya_existia = cursor.execute(
             "SELECT 1 FROM sqlite_master WHERE type='trigger' AND name=?",
-            (nombre_trigger,),
+            (f"trg_sync_{tabla.lower()}_ins",),
         ).fetchone()
 
         for operacion, sufijo in (("INSERT", "ins"), ("UPDATE", "upd")):
+            nombre = f"trg_sync_{tabla.lower()}_{sufijo}"
+            cursor.execute(f"DROP TRIGGER IF EXISTS {nombre}")
             cursor.execute(f"""
-                CREATE TRIGGER IF NOT EXISTS trg_sync_{tabla.lower()}_{sufijo}
+                CREATE TRIGGER {nombre}
                 AFTER {operacion} ON {tabla}
+                WHEN NOT EXISTS (SELECT 1 FROM SyncEstado WHERE clave = 'aplicando_descarga')
                 BEGIN
                     INSERT INTO SyncLog (tabla_afectada, id_registro, operacion)
                     VALUES ('{tabla}', NEW.{pk}, '{operacion}');

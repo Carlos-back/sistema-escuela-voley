@@ -269,12 +269,10 @@ class Sidebar(ctk.CTkFrame):
         """Lanza la sincronización en un hilo para no bloquear la pantalla."""
         if self._sync_en_curso or not self.winfo_exists():
             return
-        if automatica and contar_pendientes() == 0:
-            return
         self._sync_en_curso = True
         self._sync_resultado = None
         self.btn_sync.configure(state="disabled", text="☁  Sincronizando...")
-        self.lbl_sync.configure(text="Subiendo cambios a la nube...",
+        self.lbl_sync.configure(text="Sincronizando con la nube...",
                                 text_color=COLORS["sidebar_text"])
 
         def tarea():
@@ -305,16 +303,29 @@ class Sidebar(ctk.CTkFrame):
         self.btn_sync.configure(state="normal", text="☁  Sincronizar")
         self.refrescar_estado_sync()
 
+        # Si bajaron datos de otro equipo, se recarga la pantalla actual.
+        if resultado.get("registros_descargados") and self._active_view:
+            self._on_navigate(self._active_view)
+
         # La automática no interrumpe con ventanas: solo actualiza el estado.
         if automatica:
             return
         if resultado.get("exito"):
-            regs = resultado.get("registros_sincronizados", 0)
-            mensaje = (f"Se subieron {regs} registros a MongoDB Atlas."
-                       if regs else "No había cambios pendientes: la nube ya está al día.")
+            subidos = resultado.get("registros_sincronizados", 0)
+            bajados = resultado.get("registros_descargados", 0)
+            if subidos or bajados:
+                mensaje = (f"Se subieron {subidos} registros a MongoDB Atlas y se "
+                           f"descargaron {bajados} cargados en otros equipos.")
+            else:
+                mensaje = "No había cambios: este equipo y la nube ya estaban al día."
+            conflictos = resultado.get("conflictos") or []
+            if conflictos:
+                detalle = "\n".join(f"• {c}" for c in conflictos[:5])
+                extra = f"\n… y {len(conflictos) - 5} más." if len(conflictos) > 5 else ""
+                mensaje += f"\n\nNo se aplicaron {len(conflictos)} cambios:\n{detalle}{extra}"
             CTkMessagebox(title="Sincronización exitosa",
                           message=f"{mensaje}\n\nFecha: {resultado.get('fecha')}",
-                          icon="check", option_1="OK")
+                          icon="warning" if conflictos else "check", option_1="OK")
         else:
             pendientes = resultado.get("pendientes", 0)
             CTkMessagebox(title="No se pudo sincronizar",
