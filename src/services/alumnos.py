@@ -7,6 +7,7 @@ import re
 from datetime import date, datetime
 from db.database import get_connection, normalizar_texto
 from services.auditoria import registrar as registrar_auditoria
+from services import inscripciones as inscripciones_service
 
 # ── Mensajes canónicos de validación ────────────────────────────────
 MSG_NOMBRE_OBLIGATORIO = "El nombre es obligatorio."
@@ -24,6 +25,7 @@ MSG_TELEFONO_LARGO = "El teléfono debe tener entre 8 y 15 dígitos."
 MSG_GRUPO_OBLIGATORIO = "Debe seleccionar un grupo."
 MSG_GRUPO_INEXISTENTE = "El grupo seleccionado no existe."
 MSG_GRUPO_INACTIVO = "El grupo seleccionado no está activo."
+MSG_GRUPO_DESDE_INSCRIPCIONES = "El grupo del alumno se cambia desde Inscripciones."
 
 # Campos que el alta y la edición manipulan, en el orden de la tabla.
 _CAMPOS = ('nombre', 'apellido', 'dni', 'fecha_nacimiento',
@@ -167,6 +169,12 @@ def registrar_alumno(datos: dict):
         if estado_grupo != 'activo':
             return False, MSG_GRUPO_INACTIVO
 
+        # Sprint 5: el alta crea la inscripción del año en curso, con control de cupo.
+        periodo = inscripciones_service.anio_actual()
+        error = inscripciones_service.validar_alta(cursor, "nuevo", valores['id_grupo'], periodo)
+        if error:
+            return False, error
+
         cursor.execute(f"""
             INSERT INTO Alumnos ({', '.join(_CAMPOS)})
             VALUES ({', '.join('?' * len(_CAMPOS))})
@@ -179,9 +187,11 @@ def registrar_alumno(datos: dict):
                    "dni": valores['dni'], "id_grupo": valores['id_grupo']},
             usuario=datos.get("usuario"), conn=conn,
         )
+        inscripciones_service.insertar_inscripcion(
+            cursor, id_alumno, valores['id_grupo'], periodo, datos.get("usuario"))
 
         conn.commit()
-        return True, "Alumno registrado correctamente."
+        return True, f"Alumno registrado e inscripto para el período {periodo}."
     except Exception as e:
         print(f"Error al registrar alumno: {e}")
         return False, "Ocurrió un error al registrar el alumno."
@@ -263,9 +273,8 @@ def editar_alumno(id_alumno, datos: dict, usuario=None):
       - mismas validaciones de formato que el alta.
       - los datos de identidad (nombre, apellido, DNI y fecha de nacimiento)
         no se pueden modificar una vez registrado el alumno.
-      - solo se puede mover el alumno a un grupo activo; si el grupo no
-        cambia se acepta aunque esté inactivo, para no bloquear la edición
-        del resto de los datos cuando el grupo fue dado de baja.
+      - el grupo no se cambia acá: desde el Sprint 5 se gestiona con
+        Inscripciones (cupo e historial por período).
       - dirty checking: solo se actualizan los campos que cambiaron; si no
         hubo cambios, no se escribe ni se audita.
       - se auditan los campos modificados con su valor anterior y nuevo.
@@ -294,13 +303,9 @@ def editar_alumno(id_alumno, datos: dict, usuario=None):
         if any(valores[campo] != actual[campo] for campo in CAMPOS_INMUTABLES):
             return False, MSG_CAMPOS_INMUTABLES
 
-        # El grupo solo se valida si realmente cambia (ver docstring).
+        # Sprint 5: el grupo se gestiona desde Inscripciones (cupo e historial).
         if valores['id_grupo'] != actual['id_grupo']:
-            estado_grupo = _estado_grupo(cursor, valores['id_grupo'])
-            if estado_grupo is None:
-                return False, MSG_GRUPO_INEXISTENTE
-            if estado_grupo != 'activo':
-                return False, MSG_GRUPO_INACTIVO
+            return False, MSG_GRUPO_DESDE_INSCRIPCIONES
 
         # Dirty checking: detectar solo los campos que cambiaron
         cambios = {
@@ -360,6 +365,10 @@ def baja_logica_alumno(id_alumno, nuevo_estado='inactivo', usuario=None):
 
         cursor.execute("UPDATE Alumnos SET estado = ? WHERE id_alumno = ?",
                        (nuevo_estado, id_alumno))
+
+        # Sprint 5: al desactivar, sus inscripciones vigentes se anulan y liberan cupo.
+        if nuevo_estado == "inactivo":
+            inscripciones_service.anular_vigentes_de_alumno(cursor, id_alumno, usuario)
 
         registrar_auditoria(
             accion="UPDATE", entidad="Alumnos", id_entidad=id_alumno,

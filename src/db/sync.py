@@ -1,131 +1,216 @@
-import socket
+"""
+Flamingo Sys — Sincronización con la nube (MongoDB Atlas) — HU05, Sprint 5
+
+La base local (SQLite) es la principal y la nube es el respaldo: la
+sincronización es de una sola vía, local -> nube.
+
+Cómo funciona:
+  1. Triggers de SQLite anotan en SyncLog cada alta o modificación de las
+     tablas sincronizadas (ver db.database.TABLAS_SINCRONIZADAS).
+  2. sincronizar() toma solo los cambios pendientes, lee la versión actual de
+     cada registro y la sube con upsert por clave primaria.
+  3. Un cambio se marca como sincronizado recién cuando la nube confirmó la
+     escritura. Si se corta a mitad de camino, lo que faltó queda pendiente
+     y el reintento no duplica nada (el upsert es idempotente).
+"""
+
 import datetime
 import json
 import os
-import pymongo
-from pymongo.errors import ConnectionFailure, OperationFailure
+import socket
+import threading
+
 from config.config import Config
-from db.database import get_connection
+from db.database import TABLAS_SINCRONIZADAS, get_connection
 
 SYNC_LOG_PATH = os.path.join(os.path.dirname(Config.DB_PATH), "sync_log.json")
+MSG_SIN_CONEXION = "Sin conexión, los cambios quedan pendientes"
+MSG_SIN_CONFIGURAR = "No hay una base de datos en la nube configurada (MONGODB_URI)."
 
+# Tamaño de lote para leer registros y escribir en la nube
+TAMANIO_LOTE = 500
+
+# Evita dos sincronizaciones a la vez (la automática y la manual)
+_lock = threading.Lock()
+
+
+# ══════════════════════════════════════════════════════════════════
+# Conexión
+# ══════════════════════════════════════════════════════════════════
 def verificar_conexion():
     """
-    Verifica si hay conexión a internet haciendo ping al DNS de Google (8.8.8.8)
-    mediante sockets. Es mucho más rápido que esperar un timeout de MongoDB.
+    True si hay una URI configurada y conexión a internet. Se prueba un
+    socket al DNS de Google (3 s), más rápido que esperar el timeout de Mongo.
     """
     if not Config.MONGODB_URI:
         return False
     try:
-        # Timeout corto de 3 segundos
-        socket.create_connection(("8.8.8.8", 53), timeout=3)
+        socket.create_connection(("8.8.8.8", 53), timeout=3).close()
         return True
     except OSError:
-        pass
-    return False
+        return False
+
+
+def _crear_cliente():
+    """Cliente de MongoDB Atlas. Aislado en una función para poder probarlo."""
+    import pymongo
+    return pymongo.MongoClient(Config.MONGODB_URI, serverSelectionTimeoutMS=5000)
+
+
+# ══════════════════════════════════════════════════════════════════
+# Estado
+# ══════════════════════════════════════════════════════════════════
+def contar_pendientes():
+    """Cantidad de registros con cambios todavía no subidos a la nube."""
+    conn = get_connection()
+    if not conn:
+        return 0
+    try:
+        return conn.execute(
+            "SELECT COUNT(*) FROM (SELECT DISTINCT tabla_afectada, id_registro "
+            "FROM SyncLog WHERE sincronizado = 0)").fetchone()[0]
+    finally:
+        conn.close()
+
 
 def obtener_ultima_sincronizacion():
-    """Retorna un string con la fecha y hora de la última sincronización."""
+    """Fecha y hora de la última sincronización exitosa, o 'Nunca sincronizado'."""
     if not os.path.exists(SYNC_LOG_PATH):
         return "Nunca sincronizado"
     try:
-        with open(SYNC_LOG_PATH, 'r', encoding='utf-8') as f:
+        with open(SYNC_LOG_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
-            if data and data.get("exito"):
-                return data.get("fecha", "Desconocida")
+        return data.get("ultima_exitosa") or "Nunca sincronizado"
     except Exception:
-        pass
-    return "Nunca sincronizado"
+        return "Nunca sincronizado"
 
-def _guardar_log_local(log_data):
-    """Guarda el registro de la sincronización en disco."""
+
+def _guardar_log_local(resultado):
+    """Guarda el resultado en disco conservando la fecha de la última sync exitosa."""
+    anterior = {}
+    if os.path.exists(SYNC_LOG_PATH):
+        try:
+            with open(SYNC_LOG_PATH, "r", encoding="utf-8") as f:
+                anterior = json.load(f)
+        except Exception:
+            anterior = {}
+    data = dict(resultado)
+    data["ultima_exitosa"] = (resultado["fecha"] if resultado.get("exito")
+                              else anterior.get("ultima_exitosa")
+                              or (anterior.get("fecha") if anterior.get("exito") else None))
     try:
-        with open(SYNC_LOG_PATH, 'w', encoding='utf-8') as f:
-            json.dump(log_data, f, indent=4, ensure_ascii=False)
+        with open(SYNC_LOG_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
     except Exception as e:
         print(f"Error guardando log local: {e}")
 
-def sincronizar():
+
+# ══════════════════════════════════════════════════════════════════
+# Sincronización
+# ══════════════════════════════════════════════════════════════════
+def _pendientes_por_tabla(conn):
+    """{tabla: {id_registro: [ids de SyncLog]}} de los cambios no sincronizados."""
+    pendientes = {}
+    for fila in conn.execute(
+            "SELECT id, tabla_afectada, id_registro FROM SyncLog WHERE sincronizado = 0"):
+        tabla = fila["tabla_afectada"]
+        if tabla not in TABLAS_SINCRONIZADAS:
+            continue
+        pendientes.setdefault(tabla, {}).setdefault(fila["id_registro"], []).append(fila["id"])
+    return pendientes
+
+
+def _lotes(lista, tamanio):
+    for i in range(0, len(lista), tamanio):
+        yield lista[i:i + tamanio]
+
+
+def _subir_tabla(conn, db_cloud, tabla, cambios):
     """
-    Sincroniza los datos locales (SQLite) con la nube (MongoDB Atlas).
-    Sube todos los registros de las tablas principales y PreguntasSeguridad.
-    Retorna un diccionario con el resultado.
+    Sube a la nube la versión actual de los registros modificados de una tabla
+    y marca sus entradas de SyncLog como sincronizadas, lote por lote.
+    Retorna la cantidad de registros subidos.
+    """
+    from pymongo import UpdateOne
+
+    pk = TABLAS_SINCRONIZADAS[tabla]
+    coleccion = db_cloud[tabla.lower()]
+    subidos = 0
+    for ids in _lotes(list(cambios), TAMANIO_LOTE):
+        marcadores = ",".join("?" * len(ids))
+        filas = [dict(r) for r in conn.execute(
+            f"SELECT * FROM {tabla} WHERE {pk} IN ({marcadores})", ids)]
+        if filas:
+            coleccion.bulk_write(
+                [UpdateOne({pk: f[pk]}, {"$set": f}, upsert=True) for f in filas],
+                ordered=False)
+            subidos += len(filas)
+
+        # Recién con la escritura confirmada se marcan como sincronizados
+        log_ids = [log_id for i in ids for log_id in cambios[i]]
+        for lote in _lotes(log_ids, TAMANIO_LOTE):
+            conn.execute(
+                f"UPDATE SyncLog SET sincronizado = 1 WHERE id IN ({','.join('?' * len(lote))})",
+                lote)
+        conn.commit()
+    return subidos
+
+
+def sincronizar(automatica=False):
+    """
+    Sube a MongoDB Atlas solo los registros nuevos o modificados desde la
+    última sincronización.
+
+    Retorna un dict: {fecha, exito, automatica, registros_sincronizados,
+                      tablas_sincronizadas, pendientes, sin_conexion, error}
     """
     ahora = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    if not verificar_conexion():
-        log_data = {
-            "fecha": ahora,
-            "exito": False,
-            "error": "Sin conexión, intente más tarde"
-        }
-        return log_data
+    resultado = {"fecha": ahora, "exito": False, "automatica": automatica,
+                 "registros_sincronizados": 0, "tablas_sincronizadas": [],
+                 "sin_conexion": False, "error": None}
 
-    conn = None
-    client = None
+    if not _lock.acquire(blocking=False):
+        resultado.update(error="Ya hay una sincronización en curso.",
+                         pendientes=contar_pendientes())
+        return resultado
+
+    conn = client = None
     try:
+        if not Config.MONGODB_URI:
+            resultado.update(error=MSG_SIN_CONFIGURAR, sin_conexion=True)
+            return resultado
+        if not verificar_conexion():
+            resultado.update(error=MSG_SIN_CONEXION, sin_conexion=True)
+            return resultado
+
         conn = get_connection()
-        client = pymongo.MongoClient(Config.MONGODB_URI, serverSelectionTimeoutMS=5000)
-        db_cloud = client[Config.MONGO_DB_NAME]
-        
-        tablas = ['Grupos', 'Alumnos', 'Pagos', 'Asistencias', 'Usuarios', 'PreguntasSeguridad']
-        registros_totales = 0
-        tablas_sync = []
-        
-        for tabla in tablas:
-            cursor = conn.cursor()
-            cursor.execute(f"SELECT * FROM {tabla}")
-            rows = cursor.fetchall()
-            
-            if not rows:
-                continue
-                
-            data = [dict(row) for row in rows]
-            collection = db_cloud[tabla.lower()]
-            
-            # Determinar campo ID para la colección actual
-            id_field = f"id_{tabla[:-1].lower()}" if tabla not in ['Asistencias', 'PreguntasSeguridad'] else 'id_asistencia'
-            if tabla == 'Usuarios': id_field = 'id_usuario'
-            if tabla == 'PreguntasSeguridad': id_field = 'id'  # La tabla PreguntasSeguridad tiene id primary key
-            
-            # Upsert
-            for item in data:
-                collection.update_one(
-                    {id_field: item[id_field]},
-                    {"$set": item},
-                    upsert=True
-                )
-            
-            registros_totales += len(data)
-            tablas_sync.append(tabla.lower())
-            
-        log_data = {
-            "fecha": ahora,
-            "exito": True,
-            "tablas_sincronizadas": tablas_sync,
-            "registros_sincronizados": registros_totales,
-            "error": None
-        }
-        
-        # Guardar log en local
-        _guardar_log_local(log_data)
-        
-        # Guardar log en MongoDB Atlas
-        try:
-            db_cloud["sync_log"].insert_one(log_data.copy())
-        except Exception as e_mongo:
-            print(f"Advertencia: no se pudo guardar el log en MongoDB: {e_mongo}")
-            
-        return log_data
-        
+        pendientes = _pendientes_por_tabla(conn)
+        if pendientes:
+            client = _crear_cliente()
+            db_cloud = client[Config.MONGO_DB_NAME]
+            for tabla, cambios in pendientes.items():
+                resultado["registros_sincronizados"] += _subir_tabla(
+                    conn, db_cloud, tabla, cambios)
+                resultado["tablas_sincronizadas"].append(tabla.lower())
+
+            registro_nube = {k: v for k, v in resultado.items() if k != "error"}
+            registro_nube["exito"] = True
+            try:
+                db_cloud["sync_log"].insert_one(registro_nube)
+            except Exception as e:
+                print(f"Advertencia: no se pudo guardar el log en la nube: {e}")
+
+        resultado["exito"] = True
+        return resultado
     except Exception as e:
-        log_data = {
-            "fecha": ahora,
-            "exito": False,
-            "error": str(e)
-        }
-        _guardar_log_local(log_data)
-        return log_data
+        resultado["error"] = str(e)
+        return resultado
     finally:
-        if conn: conn.close()
-        if client: client.close()
+        if conn:
+            conn.close()
+        if client:
+            client.close()
+        resultado["pendientes"] = contar_pendientes()
+        if resultado["exito"] or not resultado["sin_conexion"]:
+            _guardar_log_local(resultado)
+        _lock.release()

@@ -22,7 +22,9 @@ class GruposFormView(ctk.CTkFrame):
     """
 
     # Campos obligatorios para habilitar el guardado
-    _REQUERIDOS = ("nombre", "horario")
+    _REQUERIDOS = ("nombre", "horario", "cupo")
+    _ETIQUETAS = {"nombre": "El nombre", "horario": "El horario", "cupo": "El cupo máximo"}
+    CUPO_POR_DEFECTO = "20"
 
     def __init__(self, parent, on_cancelar, on_registrar):
         super().__init__(parent, fg_color=COLORS["bg"], corner_radius=0)
@@ -79,16 +81,18 @@ class GruposFormView(ctk.CTkFrame):
                         "Ej: Sub-15 Competitivo")
         self._add_field(card, 3, "horario", "🕐  Horario *",
                         "Ej: Lunes y Miércoles 18:00")
-        self._add_field(card, 4, "descripcion", "📝  Descripción",
+        self._add_field(card, 4, "cupo", "👥  Cupo máximo de alumnos *",
+                        "Ej: 20 (entre 1 y 100)")
+        self._add_field(card, 5, "descripcion", "📝  Descripción",
                         "Ej: De 13 a 15 años (opcional)")
 
         # ── Error general (ej. nombre duplicado) ──────────────
         self._error_general = make_label(card, "", variant="error")
-        self._error_general.grid(row=5, column=0, sticky="w", padx=20, pady=(0, 4))
+        self._error_general.grid(row=6, column=0, sticky="w", padx=20, pady=(0, 4))
 
         # ── Botones ───────────────────────────────────────────
         btn_frame = ctk.CTkFrame(card, fg_color="transparent")
-        btn_frame.grid(row=6, column=0, sticky="e", padx=20, pady=(8, 24))
+        btn_frame.grid(row=7, column=0, sticky="e", padx=20, pady=(8, 24))
 
         make_button(btn_frame, text="Cancelar", variant="secondary",
                     command=self._on_cancelar,
@@ -142,9 +146,13 @@ class GruposFormView(ctk.CTkFrame):
         valor = entry.get().strip()
 
         if not valor:
-            etiqueta = "El nombre" if campo_id == "nombre" else "El horario"
+            etiqueta = self._ETIQUETAS[campo_id]
             entry.configure(border_color=COLORS["error"], border_width=2)
             err_label.configure(text=f"⚠  {etiqueta} es obligatorio")
+            return False
+        if campo_id == "cupo" and not (valor.isdigit() and 1 <= int(valor) <= 100):
+            entry.configure(border_color=COLORS["error"], border_width=2)
+            err_label.configure(text="⚠  Ingresá un número entero entre 1 y 100")
             return False
 
         entry.configure(border_color=COLORS["border"], border_width=2)
@@ -152,7 +160,9 @@ class GruposFormView(ctk.CTkFrame):
         return True
 
     def _hay_requeridos_completos(self) -> bool:
-        return all(self._campos[c].get().strip() for c in self._REQUERIDOS)
+        cupo = self._campos["cupo"].get().strip()
+        return (all(self._campos[c].get().strip() for c in self._REQUERIDOS)
+                and cupo.isdigit() and 1 <= int(cupo) <= 100)
 
     def _hay_cambios(self) -> bool:
         """En edición: True solo si algún campo difiere del valor original."""
@@ -191,14 +201,16 @@ class GruposFormView(ctk.CTkFrame):
             "nombre":      self._campos["nombre"].get().strip(),
             "horario":     self._campos["horario"].get().strip(),
             "descripcion": self._campos["descripcion"].get().strip(),
+            "cupo_maximo": self._campos["cupo"].get().strip(),
         }
         self._on_registrar(datos)
 
     def mostrar_error(self, mensaje: str):
         """Muestra un error devuelto por el backend (ej. nombre duplicado)."""
         self._error_general.configure(text=f"⚠  {mensaje}")
-        # Si es por el nombre, lo resaltamos
-        self._campos["nombre"].configure(border_color=COLORS["error"], border_width=2)
+        # Resaltamos el campo al que se refiere el error
+        campo = "cupo" if "cupo" in mensaje.lower() else "nombre"
+        self._campos[campo].configure(border_color=COLORS["error"], border_width=2)
 
     def cargar_grupo(self, grupo: dict):
         """Precarga el formulario para editar un grupo existente (KAN-27)."""
@@ -214,6 +226,7 @@ class GruposFormView(ctk.CTkFrame):
             "nombre":      grupo.get("nombre_grupo", ""),
             "horario":     grupo.get("horario", ""),
             "descripcion": grupo.get("descripcion") or "",
+            "cupo":        str(grupo.get("cupo_maximo") or self.CUPO_POR_DEFECTO),
         }
         for campo_id, valor in valores.items():
             entry = self._campos[campo_id]
@@ -240,4 +253,5 @@ class GruposFormView(ctk.CTkFrame):
             entry.delete(0, "end")
             entry.configure(border_color=COLORS["border"], border_width=2)
             self._errores[campo_id].configure(text="")
+        self._campos["cupo"].insert(0, self.CUPO_POR_DEFECTO)
         self._refrescar_estado_submit()

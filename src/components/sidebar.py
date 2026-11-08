@@ -6,7 +6,7 @@ components/sidebar.py — Sidebar de navegación reutilizable
 import customtkinter as ctk
 import threading
 from theme import COLORS, FONTS
-from db.sync import sincronizar, obtener_ultima_sincronizacion
+from db.sync import sincronizar, obtener_ultima_sincronizacion, contar_pendientes
 from CTkMessagebox import CTkMessagebox
 
 
@@ -25,10 +25,14 @@ class Sidebar(ctk.CTkFrame):
         ("dashboard",        "Inicio",           "🏠",  None),
         ("grupos_listado",   "Grupos",           "🏷",  ["administrador", "profesor"]),
         ("alumnos_listado",  "Alumnos",          "🎓",  None),
+        ("inscripciones_listado", "Inscripciones", "📋",  None),
+        ("informe_ocupacion", "Informes",        "📊",  ["administrador"]),
         ("pagos",            "Pagos",            "💳",  None),
         ("usuarios_listado", "Gestión Usuarios", "👥",  ["administrador"]),
         ("perfil",           "Mi Perfil",        "👤",  None),
     ]
+
+    REINTENTO_MS = 5 * 60 * 1000   # reintento automático cada 5 minutos
 
     def __init__(self, parent, user: dict, on_navigate, width: int = 210):
         super().__init__(
@@ -45,8 +49,15 @@ class Sidebar(ctk.CTkFrame):
         self._active_view = None
         self._buttons = {}
         self._width = width
+        self._sync_resultado = None   # resultado que deja el hilo de sincronización
+        self._sync_en_curso = False
+        self._sin_conexion = False
 
         self._build_ui()
+        # HU05: al iniciar sesión se sincroniza en segundo plano si hay pendientes,
+        # y se reintenta cada cierto tiempo mientras queden cambios sin subir.
+        self.after(1500, lambda: self._iniciar_sync(automatica=True))
+        self.after(self.REINTENTO_MS, self._reintento_periodico)
 
     # ──────────────────────────────────────────────────────────
     # Construcción de la UI
@@ -100,9 +111,7 @@ class Sidebar(ctk.CTkFrame):
         # ── Sección de sincronización ─────────────────────────
         self.sync_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.sync_frame.grid(row=3, column=0, sticky="s", padx=8, pady=(0, 10))
-        
-        ultima_sync = obtener_ultima_sincronizacion()
-        
+
         self.btn_sync = ctk.CTkButton(
             self.sync_frame,
             text="☁  Sincronizar",
@@ -115,15 +124,16 @@ class Sidebar(ctk.CTkFrame):
             command=self._handle_sync
         )
         self.btn_sync.pack(fill="x", pady=(0, 4))
-        
+
         self.lbl_sync = ctk.CTkLabel(
-            self.sync_frame, 
-            text=f"Última sync:\n{ultima_sync}", 
-            font=FONTS.XS(), 
+            self.sync_frame,
+            text="",
+            font=FONTS.XS(),
             text_color=COLORS["sidebar_text"],
             justify="center"
         )
         self.lbl_sync.pack()
+        self.refrescar_estado_sync()
 
         # ── Sección inferior: usuario + logout ─────────────────
         bottom = ctk.CTkFrame(self, fg_color="transparent", corner_radius=0)
@@ -230,48 +240,85 @@ class Sidebar(ctk.CTkFrame):
         if hasattr(root, "_handle_logout"):
             root._handle_logout()
 
-    def _handle_sync(self):
-        """Inicia el proceso de sincronización en un hilo secundario."""
-        self.btn_sync.configure(state="disabled", text="☁  Sincronizando...")
-        self.lbl_sync.configure(text="Por favor espere...")
-        
-        # Ejecutar en segundo plano
-        thread = threading.Thread(target=self._run_sync_task)
-        thread.daemon = True
-        thread.start()
-        
-    def _run_sync_task(self):
-        """Tarea que corre en background."""
-        resultado = sincronizar()
-        # Volver al hilo principal para actualizar la UI
-        self.after(0, lambda: self._on_sync_finished(resultado))
-        
-    def _on_sync_finished(self, resultado: dict):
-        """Actualiza la UI tras la sincronización."""
-        self.btn_sync.configure(state="normal", text="☁  Sincronizar")
-        
-        if resultado.get("exito"):
-            fecha = resultado.get("fecha")
-            regs = resultado.get("registros_sincronizados", 0)
-            self.lbl_sync.configure(text=f"Última sync:\n{fecha}")
-            try:
-                CTkMessagebox(
-                    title="Sincronización Exitosa", 
-                    message=f"Se sincronizaron {regs} registros correctamente a MongoDB Atlas.\n\nFecha: {fecha}", 
-                    icon="check",
-                    option_1="OK"
-                )
-            except Exception:
-                pass
+    # ──────────────────────────────────────────────────────────
+    # Sincronización con la nube (HU05)
+    # ──────────────────────────────────────────────────────────
+    def refrescar_estado_sync(self):
+        """Muestra la última sincronización y los cambios pendientes."""
+        if self._sync_en_curso or not self.winfo_exists():
+            return
+        pendientes = contar_pendientes()
+        if self._sin_conexion and pendientes:
+            texto = f"Sin conexión – {pendientes} cambios pendientes"
+            color = COLORS["warning"]
+        elif pendientes:
+            texto = (f"Última sync: {obtener_ultima_sincronizacion()}\n"
+                     f"{pendientes} cambio{'s' if pendientes != 1 else ''} pendiente"
+                     f"{'s' if pendientes != 1 else ''}")
+            color = COLORS["warning"]
         else:
-            error_msg = resultado.get("error", "Error desconocido")
-            self.lbl_sync.configure(text=f"Error en sync")
-            try:
-                CTkMessagebox(
-                    title="Error de Sincronización", 
-                    message=f"No se pudo sincronizar.\nDetalle: {error_msg}", 
-                    icon="cancel",
-                    option_1="OK"
-                )
-            except Exception:
-                pass
+            texto = f"Última sync: {obtener_ultima_sincronizacion()}\n✔ Todo sincronizado"
+            color = COLORS["sidebar_text"]
+        self.lbl_sync.configure(text=texto, text_color=color)
+
+    def _handle_sync(self):
+        """Sincronización manual (botón)."""
+        self._iniciar_sync(automatica=False)
+
+    def _iniciar_sync(self, automatica: bool):
+        """Lanza la sincronización en un hilo para no bloquear la pantalla."""
+        if self._sync_en_curso or not self.winfo_exists():
+            return
+        if automatica and contar_pendientes() == 0:
+            return
+        self._sync_en_curso = True
+        self._sync_resultado = None
+        self.btn_sync.configure(state="disabled", text="☁  Sincronizando...")
+        self.lbl_sync.configure(text="Subiendo cambios a la nube...",
+                                text_color=COLORS["sidebar_text"])
+
+        def tarea():
+            self._sync_resultado = sincronizar(automatica=automatica)
+
+        threading.Thread(target=tarea, daemon=True).start()
+        self.after(300, lambda: self._esperar_sync(automatica))
+
+    def _esperar_sync(self, automatica: bool):
+        """Consulta desde el hilo principal si el hilo de sync terminó."""
+        if not self.winfo_exists():
+            return
+        if self._sync_resultado is None:
+            self.after(300, lambda: self._esperar_sync(automatica))
+            return
+        self._on_sync_finished(self._sync_resultado, automatica)
+
+    def _reintento_periodico(self):
+        if not self.winfo_exists():
+            return
+        self._iniciar_sync(automatica=True)
+        self.after(self.REINTENTO_MS, self._reintento_periodico)
+
+    def _on_sync_finished(self, resultado: dict, automatica: bool = False):
+        """Actualiza la UI tras la sincronización."""
+        self._sync_en_curso = False
+        self._sin_conexion = bool(resultado.get("sin_conexion"))
+        self.btn_sync.configure(state="normal", text="☁  Sincronizar")
+        self.refrescar_estado_sync()
+
+        # La automática no interrumpe con ventanas: solo actualiza el estado.
+        if automatica:
+            return
+        if resultado.get("exito"):
+            regs = resultado.get("registros_sincronizados", 0)
+            mensaje = (f"Se subieron {regs} registros a MongoDB Atlas."
+                       if regs else "No había cambios pendientes: la nube ya está al día.")
+            CTkMessagebox(title="Sincronización exitosa",
+                          message=f"{mensaje}\n\nFecha: {resultado.get('fecha')}",
+                          icon="check", option_1="OK")
+        else:
+            pendientes = resultado.get("pendientes", 0)
+            CTkMessagebox(title="No se pudo sincronizar",
+                          message=f"{resultado.get('error', 'Error desconocido')}.\n\n"
+                                  f"Cambios pendientes: {pendientes}. "
+                                  "Se reintentará automáticamente.",
+                          icon="warning", option_1="OK")

@@ -78,6 +78,110 @@ def _migrar_grupos(conn, cursor):
     print("Migración de Grupos completada (nombre libre + columna estado).")
 
 
+# Tablas que se sincronizan con la nube y su clave primaria (HU05 — Sprint 5)
+TABLAS_SINCRONIZADAS = {
+    "Grupos": "id_grupo",
+    "Alumnos": "id_alumno",
+    "Inscripciones": "id_inscripcion",
+    "Pagos": "id_pago",
+    "Asistencias": "id_asistencia",
+    "Usuarios": "id_usuario",
+    "PreguntasSeguridad": "id",
+    "Auditoria": "id_auditoria",
+}
+
+
+def _crear_inscripciones(cursor):
+    """
+    Crea la tabla Inscripciones (entidad transaccional del Sprint 5).
+
+    Una inscripción vincula un alumno con un grupo para un período (año).
+    Ciclo de estados: vigente -> anulada | finalizada. Nunca se borra.
+    El índice parcial impide dos inscripciones vigentes del mismo alumno
+    en el mismo período, incluso si se saltea la validación del servicio.
+
+    La primera vez, cada alumno activo recibe una inscripción vigente en
+    su grupo actual para el año en curso, así no se pierde lo ya cargado.
+    """
+    existia = cursor.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='Inscripciones'"
+    ).fetchone()
+
+    cursor.executescript("""
+    CREATE TABLE IF NOT EXISTS Inscripciones (
+      id_inscripcion INTEGER PRIMARY KEY AUTOINCREMENT,
+      id_alumno INTEGER NOT NULL,
+      id_grupo INTEGER NOT NULL,
+      periodo INTEGER NOT NULL,
+      fecha_inscripcion TEXT NOT NULL DEFAULT (date('now')),
+      estado TEXT NOT NULL DEFAULT 'vigente'
+        CHECK(estado IN ('vigente', 'anulada', 'finalizada')),
+      fecha_anulacion TEXT,
+      motivo_anulacion TEXT,
+      detalle_anulacion TEXT,
+      usuario TEXT,
+      FOREIGN KEY (id_alumno) REFERENCES Alumnos(id_alumno) ON UPDATE CASCADE ON DELETE RESTRICT,
+      FOREIGN KEY (id_grupo) REFERENCES Grupos(id_grupo) ON UPDATE CASCADE ON DELETE RESTRICT
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS ux_inscripcion_vigente
+      ON Inscripciones(id_alumno, periodo) WHERE estado = 'vigente';
+    CREATE INDEX IF NOT EXISTS ix_inscripcion_grupo_periodo
+      ON Inscripciones(id_grupo, periodo, estado);
+    """)
+
+    if not existia:
+        cursor.execute("""
+            INSERT INTO Inscripciones (id_alumno, id_grupo, periodo, fecha_inscripcion, usuario)
+            SELECT id_alumno, id_grupo, CAST(strftime('%Y', 'now') AS INTEGER),
+                   COALESCE(fecha_inscripcion, date('now')), 'migracion'
+            FROM Alumnos
+            WHERE estado = 'activo'
+        """)
+
+
+def _finalizar_periodos_cerrados(cursor):
+    """Las inscripciones vigentes de años anteriores pasan a 'finalizada'."""
+    cursor.execute("""
+        UPDATE Inscripciones SET estado = 'finalizada'
+        WHERE estado = 'vigente' AND periodo < CAST(strftime('%Y', 'now') AS INTEGER)
+    """)
+
+
+def _crear_triggers_sync(cursor):
+    """
+    Registra en SyncLog cada alta o modificación de las tablas sincronizadas
+    (HU05). La sincronización sube solo lo pendiente en lugar de todo.
+
+    La primera vez que se crean los triggers se marcan como pendientes todos
+    los registros existentes (carga inicial), así la nube queda completa.
+    """
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS ix_synclog_pendiente ON SyncLog(sincronizado)")
+
+    for tabla, pk in TABLAS_SINCRONIZADAS.items():
+        nombre_trigger = f"trg_sync_{tabla.lower()}_ins"
+        ya_existia = cursor.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='trigger' AND name=?",
+            (nombre_trigger,),
+        ).fetchone()
+
+        for operacion, sufijo in (("INSERT", "ins"), ("UPDATE", "upd")):
+            cursor.execute(f"""
+                CREATE TRIGGER IF NOT EXISTS trg_sync_{tabla.lower()}_{sufijo}
+                AFTER {operacion} ON {tabla}
+                BEGIN
+                    INSERT INTO SyncLog (tabla_afectada, id_registro, operacion)
+                    VALUES ('{tabla}', NEW.{pk}, '{operacion}');
+                END
+            """)
+
+        if not ya_existia:
+            cursor.execute(f"""
+                INSERT INTO SyncLog (tabla_afectada, id_registro, operacion)
+                SELECT '{tabla}', {pk}, 'INSERT' FROM {tabla}
+            """)
+
+
 def init_db():
     """Inicializa la base de datos creando las tablas si no existen."""
     conn = get_connection()
@@ -220,7 +324,14 @@ def init_db():
     add_column_if_missing("Usuarios", "apellido", "TEXT")
     add_column_if_missing("Usuarios", "email", "TEXT")
     add_column_if_missing("Usuarios", "activo", "INTEGER DEFAULT 1")
-    
+
+    # --- SPRINT 5: Inscripciones, cupo de grupos y registro de cambios ---
+    add_column_if_missing("Grupos", "cupo_maximo",
+                          "INTEGER NOT NULL DEFAULT 20 CHECK(cupo_maximo > 0)")
+    _crear_inscripciones(cursor)
+    _finalizar_periodos_cerrados(cursor)
+    _crear_triggers_sync(cursor)
+
     conn.commit()
     conn.close()
     print("Base de datos inicializada correctamente.")

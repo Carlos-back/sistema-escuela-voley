@@ -28,17 +28,33 @@ from views.alumnos_listado import AlumnosListadoView
 from views.alumnos_form import AlumnosFormView
 from views.alumnos_detalle import AlumnosDetalleView
 from views.perfil import PerfilView
+from views.inscripciones_listado import InscripcionesListadoView
+from views.inscripciones_form import InscripcionesFormView
+from views.informe_ocupacion import InformeOcupacionView
 from components.sidebar import Sidebar
 from CTkMessagebox import CTkMessagebox
 import services.auth as auth_service
 import services.usuarios as user_service
 import services.grupos as grupos_service
 import services.alumnos as alumnos_service
+import services.inscripciones as inscripciones_service
 from db.database import init_db
 
 
 # Inicializar base de datos y migraciones
 init_db()
+
+# Vistas que se muestran dentro del área de contenido (post-login)
+VISTAS_PRINCIPALES = [
+    "dashboard", "usuarios_listado", "usuarios_form",
+    "grupos_listado", "grupos_form", "grupos_detalle",
+    "alumnos_listado", "alumnos_form", "alumnos_detalle",
+    "inscripciones_listado", "inscripciones_form", "informe_ocupacion",
+    "perfil",
+]
+# Vistas que se recargan desde la BD cada vez que se abren desde el menú
+VISTAS_CON_REFRESCO = ["grupos_listado", "alumnos_listado",
+                       "inscripciones_listado", "informe_ocupacion"]
 
 ctk.set_appearance_mode("light")
 ctk.set_default_color_theme("blue")
@@ -163,15 +179,28 @@ class FlamingoApp(ctk.CTk):
             on_desactivar=self._handle_desactivar_alumno,
             on_reactivar=self._handle_reactivar_alumno,
         )
+        usuario_actual = (self.current_user or {}).get("usuario")
+        self.views["inscripciones_listado"] = InscripcionesListadoView(
+            self.content_frame,
+            rol=rol_actual,
+            usuario=usuario_actual,
+            on_nueva=self._handle_nueva_inscripcion,
+        )
+        self.views["inscripciones_form"] = InscripcionesFormView(
+            self.content_frame,
+            on_cancelar=lambda: self.show_view("inscripciones_listado"),
+            on_registrar=self._handle_registrar_inscripcion,
+        )
+        self.views["informe_ocupacion"] = InformeOcupacionView(
+            self.content_frame, usuario=usuario_actual,
+        )
         self.views["perfil"] = PerfilView(
             self.content_frame,
             user=self.current_user,
             on_guardado=self._handle_perfil_guardado,
         )
 
-        for view in ["dashboard", "usuarios_listado", "usuarios_form",
-                     "grupos_listado", "grupos_form", "grupos_detalle",
-                     "alumnos_listado", "alumnos_form", "alumnos_detalle", "perfil"]:
+        for view in VISTAS_PRINCIPALES:
             self.views[view].grid(row=0, column=0, sticky="nsew")
             self.views[view].grid_remove()
 
@@ -184,9 +213,7 @@ class FlamingoApp(ctk.CTk):
             if name in self.views:
                 self.views[name].place_forget()
 
-        for name in ["dashboard", "usuarios_listado", "usuarios_form",
-                     "grupos_listado", "grupos_form", "grupos_detalle",
-                     "alumnos_listado", "alumnos_form", "alumnos_detalle", "perfil"]:
+        for name in VISTAS_PRINCIPALES:
             if name in self.views:
                 self.views[name].grid_remove()
 
@@ -201,7 +228,11 @@ class FlamingoApp(ctk.CTk):
                 self.sidebar.grid(row=0, column=0, sticky="nsew")
                 self.sidebar.set_active(view_name)
             if view_name in self.views:
+                if view_name in VISTAS_CON_REFRESCO:
+                    self.views[view_name].refrescar()
                 self.views[view_name].grid(row=0, column=0, sticky="nsew")
+            if self.sidebar:
+                self.sidebar.refrescar_estado_sync()
 
     # ──────────────────────────────────────────────────────────────
     # Handlers
@@ -289,6 +320,7 @@ class FlamingoApp(ctk.CTk):
                 horario=datos["horario"],
                 descripcion=datos["descripcion"],
                 usuario=usuario_actual,
+                cupo_maximo=datos["cupo_maximo"],
             )
             titulo_ok = "Grupo actualizado"
         else:
@@ -297,6 +329,7 @@ class FlamingoApp(ctk.CTk):
                 horario=datos["horario"],
                 descripcion=datos["descripcion"],
                 usuario=usuario_actual,
+                cupo_maximo=datos["cupo_maximo"],
             )
             titulo_ok = "Grupo creado"
 
@@ -423,6 +456,24 @@ class FlamingoApp(ctk.CTk):
             option_1="OK",
         )
 
+    # ── Inscripciones (Sprint 5) ──────────────────────────────
+    def _handle_nueva_inscripcion(self):
+        """Abre el formulario de inscripción con alumnos y cupos actualizados (HU01)."""
+        self.views["inscripciones_form"].limpiar()
+        self.show_view("inscripciones_form")
+
+    def _handle_registrar_inscripcion(self, datos: dict):
+        """Registra la inscripción (HU01); si el servicio la rechaza, muestra el motivo."""
+        usuario_actual = (self.current_user or {}).get("usuario")
+        exito, mensaje = inscripciones_service.registrar_inscripcion(
+            datos["id_alumno"], datos["id_grupo"], datos["periodo"], usuario=usuario_actual)
+        if exito:
+            self.show_view("inscripciones_listado")
+            CTkMessagebox(title="Inscripción registrada", message=mensaje,
+                          icon="check", option_1="OK")
+        else:
+            self.views["inscripciones_form"].mostrar_error(mensaje)
+
     def _handle_perfil_guardado(self, datos: dict):
         """Actualiza los datos del perfil en la BD."""
         if self.current_user:
@@ -442,9 +493,7 @@ class FlamingoApp(ctk.CTk):
         """Cierra la sesión y limpia el estado."""
         auth_service.logout()
         self.current_user = None
-        for name in ["dashboard", "usuarios_listado", "usuarios_form",
-                     "grupos_listado", "grupos_form", "grupos_detalle",
-                     "alumnos_listado", "alumnos_form", "alumnos_detalle", "perfil"]:
+        for name in VISTAS_PRINCIPALES:
             if name in self.views:
                 self.views[name].destroy()
                 del self.views[name]

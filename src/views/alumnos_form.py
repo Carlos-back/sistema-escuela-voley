@@ -258,10 +258,13 @@ class AlumnosFormView(ctk.CTkFrame):
 
     def _aplicar_modo(self):
         """Ajusta título, subtítulo y botón según el modo alta/edición."""
+        # En edición el grupo queda bloqueado (Sprint 5: se gestiona por Inscripciones)
+        self._grupo_menu.configure(state="disabled" if self._modo_edicion else "normal")
         if self._modo_edicion:
             self._titulo.configure(text="✏  Editar Alumno")
             self._subtitulo.configure(
-                text="Podés modificar los datos de contacto y el grupo.")
+                text="Podés modificar los datos de contacto. "
+                     "El grupo se cambia desde Inscripciones.")
             self._submit_btn.configure(text="  ✔  Guardar Cambios")
         else:
             self._titulo.configure(text="➕  Nuevo Alumno")

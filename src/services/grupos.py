@@ -10,6 +10,30 @@ from services.auditoria import registrar as registrar_auditoria
 MSG_NOMBRE_OBLIGATORIO = "El nombre es obligatorio"
 MSG_HORARIO_OBLIGATORIO = "El horario es obligatorio"
 MSG_NOMBRE_DUPLICADO = "El nombre del grupo ya existe entre los grupos activos"
+MSG_CUPO_OBLIGATORIO = "El cupo máximo es obligatorio"
+MSG_CUPO_FORMATO = "El cupo máximo debe ser un número entero entre 1 y 100"
+MSG_CUPO_MENOR = "El cupo no puede ser menor a los {vigentes} inscriptos vigentes del período {periodo}"
+CUPO_MAXIMO_PERMITIDO = 100
+
+
+def _validar_cupo(cupo):
+    """Retorna (cupo: int | None, error: str | None)."""
+    texto = str(cupo if cupo is not None else "").strip()
+    if not texto:
+        return None, MSG_CUPO_OBLIGATORIO
+    if not texto.isdigit() or not 1 <= int(texto) <= CUPO_MAXIMO_PERMITIDO:
+        return None, MSG_CUPO_FORMATO
+    return int(texto), None
+
+
+def _vigentes_maximos(cursor, id_grupo):
+    """(vigentes, periodo) del período con más inscripciones vigentes del grupo."""
+    cursor.execute(
+        "SELECT periodo, COUNT(*) AS n FROM Inscripciones "
+        "WHERE id_grupo = ? AND estado = 'vigente' "
+        "GROUP BY periodo ORDER BY n DESC LIMIT 1", (id_grupo,))
+    fila = cursor.fetchone()
+    return (fila["n"], fila["periodo"]) if fila else (0, None)
 
 
 def _normalizar_y_validar(nombre, horario, descripcion):
@@ -49,7 +73,7 @@ def _nombre_duplicado_activo(cursor, nombre, excluir_id=None):
     return cursor.fetchone() is not None
 
 
-def crear_grupo(nombre, horario, descripcion=None, usuario=None):
+def crear_grupo(nombre, horario, descripcion=None, usuario=None, cupo_maximo=20):
     """
     Crea un nuevo grupo (KAN-25).
 
@@ -65,6 +89,9 @@ def crear_grupo(nombre, horario, descripcion=None, usuario=None):
     if error:
         return False, error
     nombre, horario, descripcion = valores["nombre"], valores["horario"], valores["descripcion"]
+    cupo_maximo, error = _validar_cupo(cupo_maximo)
+    if error:
+        return False, error
 
     conn = get_connection()
     if not conn:
@@ -79,10 +106,10 @@ def crear_grupo(nombre, horario, descripcion=None, usuario=None):
 
         cursor.execute(
             """
-            INSERT INTO Grupos (nombre_grupo, horario, descripcion, estado)
-            VALUES (?, ?, ?, 'activo')
+            INSERT INTO Grupos (nombre_grupo, horario, descripcion, cupo_maximo, estado)
+            VALUES (?, ?, ?, ?, 'activo')
             """,
-            (nombre, horario, descripcion),
+            (nombre, horario, descripcion, cupo_maximo),
         )
         id_grupo = cursor.lastrowid
 
@@ -91,7 +118,8 @@ def crear_grupo(nombre, horario, descripcion=None, usuario=None):
             accion="INSERT",
             entidad="Grupos",
             id_entidad=id_grupo,
-            datos={"nombre_grupo": nombre, "horario": horario, "descripcion": descripcion},
+            datos={"nombre_grupo": nombre, "horario": horario, "descripcion": descripcion,
+                   "cupo_maximo": cupo_maximo},
             usuario=usuario,
             conn=conn,
         )
@@ -105,7 +133,7 @@ def crear_grupo(nombre, horario, descripcion=None, usuario=None):
         conn.close()
 
 
-def editar_grupo(id_grupo, nombre, horario, descripcion=None, usuario=None):
+def editar_grupo(id_grupo, nombre, horario, descripcion=None, usuario=None, cupo_maximo=None):
     """
     Modifica un grupo existente (KAN-28).
 
@@ -133,7 +161,7 @@ def editar_grupo(id_grupo, nombre, horario, descripcion=None, usuario=None):
         cursor = conn.cursor()
 
         cursor.execute(
-            "SELECT nombre_grupo, horario, descripcion FROM Grupos WHERE id_grupo = ?",
+            "SELECT nombre_grupo, horario, descripcion, cupo_maximo FROM Grupos WHERE id_grupo = ?",
             (id_grupo,),
         )
         actual = cursor.fetchone()
@@ -145,8 +173,19 @@ def editar_grupo(id_grupo, nombre, horario, descripcion=None, usuario=None):
         if _nombre_duplicado_activo(cursor, nombre, excluir_id=id_grupo):
             return False, MSG_NOMBRE_DUPLICADO
 
+        # Cupo (Sprint 5): no puede quedar por debajo de los inscriptos vigentes
+        if cupo_maximo is None:
+            cupo_maximo = actual["cupo_maximo"]
+        cupo_maximo, error = _validar_cupo(cupo_maximo)
+        if error:
+            return False, error
+        vigentes, periodo = _vigentes_maximos(cursor, id_grupo)
+        if cupo_maximo < vigentes:
+            return False, MSG_CUPO_MENOR.format(vigentes=vigentes, periodo=periodo)
+
         # Dirty checking: detectar solo los campos que cambiaron
-        nuevos = {"nombre_grupo": nombre, "horario": horario, "descripcion": descripcion}
+        nuevos = {"nombre_grupo": nombre, "horario": horario, "descripcion": descripcion,
+                  "cupo_maximo": cupo_maximo}
         cambios = {
             campo: {"anterior": actual[campo], "nuevo": valor}
             for campo, valor in nuevos.items()
@@ -210,6 +249,10 @@ def desactivar_grupo(id_grupo, usuario=None):
             (id_grupo,),
         )
         alumnos_activos = cursor.fetchone()[0]
+        vigentes, _periodo = _vigentes_maximos(cursor, id_grupo)
+        if vigentes > 0 and alumnos_activos == 0:
+            return False, (f"No se puede desactivar: el grupo tiene {vigentes} "
+                           f"inscripción(es) vigente(s).")
         if alumnos_activos > 0:
             return False, (
                 f"No se puede desactivar: el grupo tiene {alumnos_activos} "
